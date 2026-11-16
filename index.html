@@ -62,9 +62,11 @@ ul, ol { list-style: none; }
 .btn[aria-pressed="true"] { background: var(--chalk); border-color: var(--chalk); color: var(--slate-deep); }
 
 /* ---------- setup ---------- */
-#app.setup { overflow-y: auto; }
+#app.setup, #app.scores { overflow-y: auto; }
 .setup-wrap { max-width: 560px; margin: 0 auto; display: flex; flex-direction: column; gap: 28px; padding-bottom: 24px; }
-.brand { display: flex; align-items: baseline; gap: 14px; border-bottom: 2px solid var(--line); padding-bottom: 10px; }
+.brand { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 14px; border-bottom: 2px solid var(--line); padding-bottom: 10px; }
+.brand .btn { margin-left: auto; align-self: center; }
+@media (max-width: 480px) { .brand p { display: none; } }
 .brand h1 { font: 700 56px/1 var(--display); letter-spacing: .02em; }
 .brand-mark { width: 56px; height: 56px; flex: none; align-self: center; }
 .brand p { color: var(--chalk-dim); }
@@ -101,6 +103,22 @@ ul, ol { list-style: none; }
 }
 .game:has(.pick[aria-pressed="true"]) .art { opacity: .7; }
 .game strong, .game span, .game .how { text-shadow: 0 1px 8px var(--slate); }
+
+/* ---------- scoreboard ---------- */
+.board-wrap { max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; padding-bottom: 24px; }
+.table-wrap { overflow-x: auto; border: 2px solid var(--line); border-radius: 8px; background: var(--slate-deep); }
+table.sb { width: 100%; border-collapse: separate; border-spacing: 0; font-variant-numeric: tabular-nums; }
+.sb th, .sb td { padding: 10px 12px; text-align: right; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.sb thead th { font-size: 13px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--chalk-dim); }
+.sb thead th:first-child, .sb tbody th { text-align: left; }
+/* The player column stays put while the numbers scroll sideways on a phone. */
+.sb thead th:first-child, .sb tbody th { position: sticky; left: 0; background: var(--slate-deep); }
+.sb tbody th { font-weight: 600; font-size: 18px; }
+.sb .rank { display: inline-block; width: 22px; color: var(--chalk-dim); font-size: 15px; }
+.sb tbody tr.lead th { color: var(--yellow); }
+.sb tbody tr:last-child > * { border-bottom: 0; }
+.board-empty { border: 2px dashed var(--line); border-radius: 8px; padding: 22px; color: var(--chalk-dim); text-align: center; }
+.board-foot { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: space-between; }
 
 /* ---------- how to play ---------- */
 dialog.rules {
@@ -144,6 +162,8 @@ dialog.rules::backdrop { background: rgba(10, 14, 13, .7); overflow: hidden; ove
 .bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .bar h1 { font: 700 30px/1 var(--display); }
 .bar .meta { color: var(--chalk-dim); flex: 1; }
+/* The header buttons wrap as one row, so a narrow screen gets title above buttons, not a lone End game. */
+.bar-actions { display: flex; gap: 8px; margin-left: auto; }
 .stage { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 12px; }
 .board { flex: 1; min-height: 0; overflow: auto; border: 2px solid var(--line); border-radius: 8px; background: var(--slate-deep); padding: 12px; }
 .side { display: flex; flex-direction: column; gap: 10px; }
@@ -249,6 +269,9 @@ const HALVE_TARGETS = [
 // m left out means "any ring of n": used to decide whether a whole number is faded.
 const halveHit = (t, n, m) => n === t.n && (!t.m || m === undefined || m === t.m);
 
+const dartValue = d => d.n * d.m;
+const x01Avg = (points, darts) => darts ? (points / darts * 3).toFixed(1) : "–";
+
 function dartLabel(d) {
   if (d.n === 0) return "Miss";
   if (d.n === 25) return d.m === 2 ? "50" : "25";
@@ -257,10 +280,13 @@ function dartLabel(d) {
 
 const ALL_DARTS = (() => {
   const a = [];
-  for (const m of [3, 2, 1]) for (let n = 20; n >= 1; n--) a.push({ n, m, v: n * m });
+  for (const m of [3, 2, 1]) for (let n = 20; n >= 1; n--) a.push({ n, m, v: dartValue({ n, m }) });
   a.push({ n: 25, m: 2, v: 50 }, { n: 25, m: 1, v: 25 });
   return a.sort((x, y) => y.v - x.v);
 })();
+
+// Scoreboard column for games won on points.
+const BEST_SCORE_STATS = { cols: ["Best score"], add(a, { p }) { a.best = Math.max(a.best ?? -Infinity, p.score); }, show: a => [a.best ?? "–"] };
 
 // After the last player's turn in the final round, the top score wins; ties share.
 function endAfterRound(s, lastRound) {
@@ -326,6 +352,18 @@ const GAMES = {
   x01: {
     title: "501 / 301 / 701",
     blurb: "Count down to exactly zero.",
+    short: "501",
+    // The average counts every dart, busts included, as the in-game average does.
+    stats: {
+      cols: ["Avg", "Best out", "180s"],
+      add(a, { s, p, won, turns }) {
+        a.pts = (a.pts || 0) + s.setup.opts.start - p.score;
+        a.darts = (a.darts || 0) + p.thrown;
+        if (won) a.out = Math.max(a.out || 0, s.turnStart);
+        a.tons = (a.tons || 0) + turns.filter(t => t.note !== "Bust" && t.darts.reduce((x, d) => x + dartValue(d), 0) === 180).length;
+      },
+      show: a => [x01Avg(a.pts, a.darts), a.out || "–", a.tons || 0]
+    },
     rules: `
       <p>Everyone starts on the same score (301, 501 or 701) and takes turns of three darts. Whatever you hit is taken off your score. The first player to reach <b>exactly zero</b> wins.</p>
       <h3>Finishing</h3>
@@ -347,7 +385,7 @@ const GAMES = {
     startTurn(s) { s.turnStart = s.p[s.cur].score; },
     dart(s, p, d) {
       p.thrown++;
-      const left = p.score - d.n * d.m, dbl = s.setup.opts.doubleOut;
+      const left = p.score - dartValue(d), dbl = s.setup.opts.doubleOut;
       if (left < 0 || (dbl && left === 1) || (left === 0 && dbl && d.m !== 2)) {
         p.score = s.turnStart; s.note = "Bust"; return true;
       }
@@ -361,12 +399,23 @@ const GAMES = {
     },
     big: p => p.score,
     sub(p, s) {
-      return p.thrown ? "avg " + ((s.setup.opts.start - p.score) / p.thrown * 3).toFixed(1) : "avg –";
+      return "avg " + x01Avg(s.setup.opts.start - p.score, p.thrown);
     }
   },
   cricket: {
     title: "Cricket",
     blurb: "Close 15 to 20 and the bull, then score on them.",
+    // Marks per round counts scoring marks too, not just the three that close a number.
+    stats: {
+      cols: ["Marks/round"],
+      add(a, { turns }) {
+        for (const t of turns) for (const d of t.darts) {
+          a.darts = (a.darts || 0) + 1;
+          if (CRICKET_NUMS.includes(d.n)) a.marks = (a.marks || 0) + d.m;
+        }
+      },
+      show: a => [a.darts ? ((a.marks || 0) / a.darts * 3).toFixed(2) : "–"]
+    },
     rules: `
       <p>Only <b>15 to 20 and the bull</b> count. Close all seven before your opponents, and outscore them on the way.</p>
       <h3>Closing</h3>
@@ -400,6 +449,12 @@ const GAMES = {
   clock: {
     title: "Around the Clock",
     blurb: "Hit 1 to 20 in order, then the bull.",
+    short: "Clock",
+    stats: {
+      cols: ["Fewest darts"],
+      add(a, { won, turns }) { if (won) a.best = Math.min(a.best ?? Infinity, turns.reduce((n, t) => n + t.darts.length, 0)); },
+      show: a => [a.best ?? "–"]
+    },
     rules: `
       <p>Hit <b>1, then 2, and so on up to 20</b>, then the bull. The first player to hit the bull wins.</p>
       <ul><li>Any part of the right number counts: single, double or treble. For the bull, the outer bull and the bullseye both count.</li>
@@ -428,6 +483,7 @@ const GAMES = {
   halve: {
     title: "Halve-It",
     blurb: "Seven targets. Miss one with all three darts and your score halves.",
+    stats: BEST_SCORE_STATS,
     rules: `
       <p>Everyone starts with <b>40 points</b> and plays the same seven targets, one per round: 20, 16, double 7, 14, 18, treble 10 and the bull.</p>
       <h3>Scoring</h3>
@@ -452,7 +508,7 @@ const GAMES = {
     startTurn(s) { s.turnHit = false; },
     dart(s, p, d) {
       const t = HALVE_TARGETS[s.round - 1];
-      if (halveHit(t, d.n, d.m)) { p.score += d.n * d.m; s.turnHit = true; }
+      if (halveHit(t, d.n, d.m)) { p.score += dartValue(d); s.turnHit = true; }
       return false;
     },
     endTurn(s, p) {
@@ -467,6 +523,7 @@ const GAMES = {
   shanghai: {
     title: "Shanghai",
     blurb: "Round 1 aims at 1, round 2 at 2, and so on. Single, double and triple in one turn wins outright.",
+    stats: BEST_SCORE_STATS,
     rules: `
       <p>The game lasts 7 or 20 rounds. In round 1 everyone aims at 1, in round 2 at 2, and so on. Only the round's number scores: a single is worth the number, a double twice it and a treble three times.</p>
       <h3>Shanghai</h3>
@@ -487,7 +544,7 @@ const GAMES = {
     startTurn(s) { s.turnHits = []; },
     dart(s, p, d) {
       if (d.n !== s.round) return false;
-      p.score += d.n * d.m;
+      p.score += dartValue(d);
       s.turnHits.push(d.m);
       if ([1, 2, 3].every(m => s.turnHits.includes(m))) { s.over = true; s.winners = [s.cur]; }
       return false;
@@ -600,17 +657,71 @@ function throwDart(s, d) {
   }
 }
 
-function replay(setup, log) {
-  const s = newState(setup);
-  for (const d of log) throwDart(s, d);
-  return s;
+const replay = (setup, log) => replayTurns(setup, log).s;
+
+// Replay a game and also list every turn, including the unfinished last one when the game ended mid-turn.
+function replayTurns(setup, log) {
+  const s = newState(setup), turns = [];
+  let last = null;
+  for (const d of log) {
+    throwDart(s, d);
+    if (s.last !== last) turns.push(last = s.last);
+  }
+  if (s.over && (!last || last.darts !== s.darts)) turns.push({ player: s.cur, darts: s.darts, note: s.note });
+  return { s, turns };
 }
 
 /* ================= app ================= */
 
 const KEY = "chalk.v1", OLD_KEY = "oche.v1";
+/* Finished games, kept apart from the main save so it stays small. Each entry is the setup and dart log,
+   so the scoreboard is rebuilt by replaying them through the current rules. */
+const HISTORY_KEY = "chalk.history.v1", HISTORY_MAX = 1000;
+let matchHistory = [];
+const readJSON = k => { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } };
+// A failed write (storage full or blocked) just means this browser won't remember it; play goes on.
+const writeJSON = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* see above */ } };
+// Darts are stored as one number each (n * 4 + m), several times smaller than { n, m } objects.
+const packDart = d => d.n * 4 + d.m;
+const unpackDart = x => ({ n: x >> 2, m: x & 3 });
+const realDart = d => (d.n === 0 || d.n === 25 || (d.n >= 1 && d.n <= 20)) && d.m >= 1 && d.m <= (d.n === 25 ? 2 : 3);
+function loadHistory() {
+  const h = readJSON(HISTORY_KEY);
+  matchHistory = (Array.isArray(h) ? h : []).filter(e => valid(e) && typeof e.at === "number"
+    && e.setup.players.length && e.setup.players.every(n => typeof n === "string")
+    && e.log.every(Number.isInteger)).map(e => ({ ...e, log: e.log.map(unpackDart) })).filter(e => e.log.every(realDart));
+  for (const e of matchHistory) { e.setup.opts = e.setup.opts || {}; fillOpts(e.setup); }
+  replayCache.clear();
+}
+const saveHistory = () => writeJSON(HISTORY_KEY, matchHistory.map(e => ({ ...e, log: e.log.map(packDart) })));
+// Saved games never change, so each one is replayed once per session.
+const replayCache = new Map();
+function replayEntry(h) {
+  let c = replayCache.get(h.id);
+  if (!c) {
+    const { s, turns } = replayTurns(h.setup, h.log), byPlayer = s.p.map(() => []);
+    for (const t of turns) byPlayer[t.player].push(t);
+    replayCache.set(h.id, c = { s, byPlayer });
+  }
+  return c;
+}
+// A game is recorded when a dart finishes it; undoing the winning dart takes the record back out.
+function recordResult() {
+  if (app.view !== "play") return;
+  if (!app.gameId) app.gameId = Date.now();
+  const over = replay(app.setup, app.log).over, i = matchHistory.findIndex(h => h.id === app.gameId);
+  if (over && i < 0) {
+    matchHistory.push({ id: app.gameId, at: Date.now(), setup: JSON.parse(JSON.stringify(app.setup)), log: app.log.slice() });
+    if (matchHistory.length > HISTORY_MAX) matchHistory.splice(0, matchHistory.length - HISTORY_MAX).forEach(e => replayCache.delete(e.id));
+    saveHistory();
+  } else if (!over && i >= 0) {
+    replayCache.delete(matchHistory[i].id);
+    matchHistory.splice(i, 1);
+    saveHistory();
+  }
+}
 // roster: every player ever added; setup.players: who is in this game, in throwing order (names from the roster).
-const DEFAULTS = { view: "setup", roster: [], setup: { game: "x01", opts: {}, players: [] }, log: [] };
+const DEFAULTS = { view: "setup", board: { period: "today", game: "all" }, roster: [], setup: { game: "x01", opts: {}, players: [] }, log: [] };
 const MAX_PLAYERS = 8;
 let app = JSON.parse(JSON.stringify(DEFAULTS));
 // confirming: the action key ("end", "del:<i>") whose first tap is waiting for a second. draft: the new-player box.
@@ -624,20 +735,22 @@ function load() {
   try {
     const old = localStorage.getItem(OLD_KEY); // carry over a game saved before the rename
     if (old !== null) { if (localStorage.getItem(KEY) === null) localStorage.setItem(KEY, old); localStorage.removeItem(OLD_KEY); }
-    const a = JSON.parse(localStorage.getItem(KEY)); if (valid(a)) app = a;
-  } catch (e) { /* start fresh */ }
+  } catch (e) { /* storage blocked: start fresh */ }
+  const a = readJSON(KEY);
+  if (valid(a)) app = a;
 }
-function save() {
-  try { localStorage.setItem(KEY, JSON.stringify(app)); } catch (e) { /* keep playing without it */ }
-}
-const sameName = (a, b) => a.trim().toLowerCase() === b.trim().toLowerCase();
+const save = () => writeJSON(KEY, app);
+const nameKey = n => n.trim().toLowerCase();
+const sameName = (a, b) => nameKey(a) === nameKey(b);
+// Back from the scoreboard returns to a finished game only if it is still there to show.
+const canReturnToGame = () => app.boardFrom === "play" && app.setup.players.length > 0 && app.log.length > 0;
 const inGame = n => app.setup.players.some(p => sameName(p, n));
 /* Keep setup.players a clean subset of the roster. Older saves have no roster: it starts from the current
    setup, minus the old "Player 1"/"Player 2" placeholders, and their names may be blank or duplicated. */
 function syncRoster() {
   const migrating = !Array.isArray(app.roster);
   app.roster = (migrating ? [] : app.roster).filter(n => typeof n === "string" && n.trim());
-  if (app.view === "play") { // a game in progress keeps its names as they are, but they are still saved
+  if (app.view === "play" || (app.view === "scores" && app.boardFrom === "play")) { // a game on screen keeps its names, but they are still saved
     for (const n of app.setup.players) if (String(n).trim() && !app.roster.some(r => sameName(r, n))) app.roster.push(n);
     return;
   }
@@ -674,7 +787,7 @@ function setupView() {
     <button class="btn join" data-act="join" data-v="${i}" ${full ? "disabled" : ""}>+ ${esc(n)}</button>
     <button class="btn del danger" data-act="del" data-v="${i}">${confirming === "del:" + i ? "Tap again to delete" : "Delete"}<span class="vh"> ${esc(n)}</span></button></li>`).join("");
   return `<div class="setup-wrap">
-    <header class="brand"><svg class="brand-mark" viewBox="0 0 64 64" aria-hidden="true" focusable="false"><defs><filter id="chalk" x="-10%" y="-10%" width="120%" height="120%">  <feTurbulence type="fractalNoise" baseFrequency="0.7" numOctaves="2" seed="4" result="wobble"/>  <feDisplacementMap in="SourceGraphic" in2="wobble" scale="1.6" xChannelSelector="R" yChannelSelector="G" result="rough"/>  <feTurbulence type="fractalNoise" baseFrequency="1.8" numOctaves="1" seed="9" result="grain"/>  <feColorMatrix in="grain" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 -1.3 1.5" result="grainAlpha"/>  <feComposite in="rough" in2="grainAlpha" operator="in"/></filter></defs><g filter="url(#chalk)"><circle cx="29" cy="35" r="22" fill="none" stroke="#eeece3" stroke-width="3.2"/><circle cx="29" cy="35" r="14" fill="none" stroke="#eeece3" stroke-width="3.2"/><circle cx="29" cy="35" r="6.5" fill="none" stroke="#eeece3" stroke-width="2.6"/><circle cx="29" cy="35" r="2.8" fill="#f2d56b"/><line x1="33" y1="31" x2="54.6" y2="9.4" stroke="#27332f" stroke-width="8" stroke-linecap="round"/><polygon points="50.8,13.2 61.6,11.6 57,7 52.4,2.4" fill="#27332f" stroke="#27332f" stroke-width="3" stroke-linejoin="round"/><line x1="33" y1="31" x2="41.6" y2="22.4" stroke="#eeece3" stroke-width="4.2" stroke-linecap="round"/><line x1="41.6" y1="22.4" x2="54.6" y2="9.4" stroke="#eeece3" stroke-width="1.8" stroke-linecap="round"/><polygon points="50.8,13.2 60.5,10.5 57,7 53.5,3.5" fill="#f2d56b"/></g></svg><h1>Chalk</h1><p>Darts scorer</p></header>
+    <header class="brand"><svg class="brand-mark" viewBox="0 0 64 64" aria-hidden="true" focusable="false"><defs><filter id="chalk" x="-10%" y="-10%" width="120%" height="120%">  <feTurbulence type="fractalNoise" baseFrequency="0.7" numOctaves="2" seed="4" result="wobble"/>  <feDisplacementMap in="SourceGraphic" in2="wobble" scale="1.6" xChannelSelector="R" yChannelSelector="G" result="rough"/>  <feTurbulence type="fractalNoise" baseFrequency="1.8" numOctaves="1" seed="9" result="grain"/>  <feColorMatrix in="grain" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 -1.3 1.5" result="grainAlpha"/>  <feComposite in="rough" in2="grainAlpha" operator="in"/></filter></defs><g filter="url(#chalk)"><circle cx="29" cy="35" r="22" fill="none" stroke="#eeece3" stroke-width="3.2"/><circle cx="29" cy="35" r="14" fill="none" stroke="#eeece3" stroke-width="3.2"/><circle cx="29" cy="35" r="6.5" fill="none" stroke="#eeece3" stroke-width="2.6"/><circle cx="29" cy="35" r="2.8" fill="#f2d56b"/><line x1="33" y1="31" x2="54.6" y2="9.4" stroke="#27332f" stroke-width="8" stroke-linecap="round"/><polygon points="50.8,13.2 61.6,11.6 57,7 52.4,2.4" fill="#27332f" stroke="#27332f" stroke-width="3" stroke-linejoin="round"/><line x1="33" y1="31" x2="41.6" y2="22.4" stroke="#eeece3" stroke-width="4.2" stroke-linecap="round"/><line x1="41.6" y1="22.4" x2="54.6" y2="9.4" stroke="#eeece3" stroke-width="1.8" stroke-linecap="round"/><polygon points="50.8,13.2 60.5,10.5 57,7 53.5,3.5" fill="#f2d56b"/></g></svg><h1>Chalk</h1><p>Darts scorer</p><button class="btn small" data-act="board">Scoreboard</button></header>
     <section class="block"><h2 class="label">Game</h2><div class="games" role="group" aria-label="Game">${games}</div>${opts}</section>
     <section class="block"><h2 class="label">Playing, in throwing order</h2>
       ${playing ? `<ol class="players">${playing}</ol>` : `<p class="fine">Nobody yet. Add a player${saved ? " or pick a saved one below" : ""}.</p>`}
@@ -753,7 +866,8 @@ function playView() {
     side = `<div class="win"><h2>${head}</h2><div class="row">
       <button class="btn primary" data-act="again">Play again</button>
       <button class="btn" data-act="undo">Undo last dart</button>
-      <button class="btn" data-act="new">Change game</button></div>
+      <button class="btn" data-act="new">Change game</button>
+      <button class="btn" data-act="board">Scoreboard</button></div>
       <p class="fine">Play again keeps the same game and moves the first player to the back of the order.</p></div>`;
   } else {
     const live = g.live ? g.live(s) : null;
@@ -776,15 +890,71 @@ function playView() {
   }
   return `
     <header class="bar"><h1>${g.name(app.setup.opts)}</h1><span class="meta">${(g.roundLabel && g.roundLabel(s)) || "Round " + s.round}</span>
-      ${canWake ? `<button class="btn small" aria-pressed="${awake()}" data-act="awake" data-v="${AWAKE_CHOICES.findIndex(([v]) => v !== awake())}" title="Stop the screen going to sleep during the game">Screen on</button>` : ""}
-      <button class="btn small danger" data-act="end">${confirming === "end" ? "Tap again to end" : "End game"}</button></header>
-    <div class="stage"><section class="board" aria-label="Scoreboard">${boardView(s)}</section><section class="side">${side}</section></div>`;
+      <div class="bar-actions">${canWake ? `<button class="btn small" aria-pressed="${awake()}" data-act="awake" data-v="${AWAKE_CHOICES.findIndex(([v]) => v !== awake())}" title="Stop the screen going to sleep during the game">Screen on</button>` : ""}
+      ${g.rules ? `<button class="btn small" data-act="rules" data-v="${app.setup.game}" aria-haspopup="dialog">Rules</button>` : ""}
+      <button class="btn small danger" data-act="end">${confirming === "end" ? "Tap again to end" : "End game"}</button></div></header>
+    <div class="stage"><section class="board" aria-label="Scores">${boardView(s)}</section><section class="side">${side}</section></div>`;
+}
+
+const PERIODS = [["today", "Today"], ["life", "Lifetime"]];
+const boardGames = () => [["all", "All games"], ...Object.entries(GAMES).map(([id, g]) => [id, g.short || g.title])];
+function startOfToday() { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); }
+
+// One row per player (matched by name, any letter case) over the finished games in the chosen period and game.
+function scoreRows(period, game) {
+  const since = period === "today" ? startOfToday() : 0, g = GAMES[game], rows = new Map();
+  let count = 0;
+  for (const h of matchHistory) {
+    if (h.at < since || (game !== "all" && h.setup.game !== game)) continue;
+    const { s, byPlayer } = replayEntry(h);
+    if (!s.over) continue; // a log that no longer finishes under the current rules has no result
+    count++;
+    const multi = s.p.length > 1;
+    s.p.forEach((p, i) => {
+      const id = nameKey(p.name);
+      let r = rows.get(id);
+      if (!r) rows.set(id, r = { name: app.roster.find(n => sameName(n, p.name)) || p.name, played: 0, won: 0, acc: {} });
+      const won = s.winners.includes(i);
+      if (multi) { r.played++; if (won) r.won++; } // solo practice doesn't count as a win
+      if (g && g.stats) g.stats.add(r.acc, { s, p, won, turns: byPlayer[i] });
+    });
+  }
+  const pct = r => r.played ? r.won / r.played : -1;
+  return { count, rows: [...rows.values()].sort((a, b) => b.won - a.won || pct(b) - pct(a) || b.played - a.played || a.name.localeCompare(b.name)) };
+}
+
+function scoreView() {
+  const b = app.board, g = GAMES[b.game], stats = g && g.stats, today = b.period === "today";
+  const { count, rows } = scoreRows(b.period, b.game);
+  const gameName = g ? g.short || g.title : "All games";
+  const pct = r => r.played ? Math.round(r.won / r.played * 100) + "%" : "–";
+  // Players level on wins, win % and games played share a rank.
+  const same = (x, y) => x.won === y.won && x.played === y.played;
+  const ranks = rows.reduce((acc, r, i) => [...acc, i && same(r, rows[i - 1]) ? acc[i - 1] : i + 1], []);
+  const cells = vals => vals.map(v => `<td>${v}</td>`).join("");
+  const body = rows.map((r, i) => `<tr class="${ranks[i] === 1 && r.won ? "lead" : ""}">
+    <th scope="row"><span class="rank">${ranks[i]}</span>${esc(r.name)}</th>${cells([r.won, r.played, pct(r), ...(stats ? stats.show(r.acc) : [])])}</tr>`).join("");
+  const head = ["Won", "Played", "Win %", ...(stats ? stats.cols : [])].map(c => `<th scope="col">${c}</th>`).join("");
+  const table = rows.length ? `<div class="table-wrap" role="region" aria-labelledby="sb-cap" tabindex="0"><table class="sb">
+      <caption id="sb-cap" class="vh">Scoreboard, ${today ? "today" : "lifetime"}, ${esc(gameName)}</caption>
+      <thead><tr><th scope="col">Player</th>${head}</tr></thead><tbody>${body}</tbody></table></div>`
+    : `<p class="board-empty">No finished ${g ? esc(gameName) + " " : ""}games ${today ? "today" : "yet"}.</p>`;
+  const date = new Intl.DateTimeFormat(undefined, { weekday: "short", day: "numeric", month: "short" }).format(new Date());
+  return `<div class="board-wrap">
+    <header class="bar"><h1>Scoreboard</h1><span class="meta">${today ? date : "All time"}</span>
+      <button class="btn small" data-act="back">Back</button></header>
+    ${seg("Period", "period", PERIODS, b.period)}
+    ${seg("Game", "sbgame", boardGames(), b.game)}
+    ${table}
+    <div class="board-foot"><p class="fine">${count} finished game${count === 1 ? "" : "s"}${today ? " today" : ""}. Wins count games with two or more players.</p>
+      ${matchHistory.length ? `<button class="btn small danger" data-act="clearhist">${confirming === "clearhist" ? "Tap again to clear all" : "Clear history"}</button>` : ""}</div>
+  </div>`;
 }
 
 function render() {
   const root = document.getElementById("app");
   root.className = app.view;
-  root.innerHTML = app.view === "play" ? playView() : setupView();
+  root.innerHTML = ({ play: playView, scores: scoreView }[app.view] || setupView)();
   syncWakeLock();
 }
 
@@ -823,13 +993,13 @@ function showRules(id) {
 }
 
 function act({ act: a, v, m, k }) {
+  if (a === "rules") { showRules(v); return; } // only opens the dialog: no state change, no re-render
   const st = app.setup;
-  // Any other tap cancels a pending "tap again" confirmation.
+  // Any other tap (opening the rules aside) cancels a pending "tap again" confirmation.
   const key = a === "del" ? "del:" + v : a, armed = confirming === key;
   confirming = null;
   switch (a) {
     case "game": st.game = v; fillOpts(st); break;
-    case "rules": showRules(v); return;
     case "opt": {
       const op = (GAMES[st.game].options || []).find(o => o.key === k);
       if (!op || !op.choices[v]) return;
@@ -859,13 +1029,20 @@ function act({ act: a, v, m, k }) {
     case "go":
       if (tooFew(st)) return;
       draft = "";
-      app.log = []; app.view = "play"; break;
+      app.log = []; app.view = "play"; app.gameId = Date.now(); break;
     case "n": app.log.push({ n: +v, m: +m || 1 }); break;
     case "undo": app.log.pop(); break;
     case "input": app.input = v; break;
     case "awake": if (!AWAKE_CHOICES[v]) return; app.awake = AWAKE_CHOICES[v][0]; wakeRefused = false; break;
-    case "again": st.players.push(st.players.shift()); app.log = []; break;
+    case "again": st.players.push(st.players.shift()); app.log = []; app.gameId = Date.now(); break;
     case "new": app.log = []; app.view = "setup"; break;
+    case "board": app.boardFrom = app.view; app.view = "scores"; break;
+    case "back": app.view = canReturnToGame() ? "play" : "setup"; break;
+    case "period": if (!PERIODS[v]) return; app.board.period = PERIODS[v][0]; break;
+    case "sbgame": { const c = boardGames()[v]; if (!c) return; app.board.game = c[0]; break; }
+    case "clearhist":
+      if (!armed) { confirming = key; break; }
+      matchHistory = []; replayCache.clear(); saveHistory(); break;
     case "end":
       if (!armed) { confirming = key; break; }
       app.log = []; app.view = "setup";
@@ -875,9 +1052,11 @@ function act({ act: a, v, m, k }) {
   // Rendering replaces the page, so put keyboard focus back on the same control (or the next one in its place).
   const f = typeof document !== "undefined" && document.activeElement;
   const was = f && (f.id === "newp" ? { id: "newp" } : f.dataset && f.dataset.act ? { act: f.dataset.act, v: f.dataset.v } : null);
+  if (a === "n" || a === "undo") recordResult(); // only a dart can finish or un-finish a game
   save(); render();
   if (was) {
     const root = document.getElementById("app");
+    if (was.act === "back") was.act = "board"; // land on the Scoreboard button that led there
     const el = was.id ? document.getElementById(was.id)
       : [...root.querySelectorAll("[data-act]")].find(e => e.dataset.act === was.act && e.dataset.v === was.v) || document.getElementById("newp");
     if (el && !el.disabled) el.focus();
@@ -888,6 +1067,9 @@ function start(data) {
   if (valid(data)) app = data; else load();
   fillOpts(app.setup);
   syncRoster();
+  loadHistory();
+  if (!app.board || !PERIODS.some(([p]) => p === app.board.period)) app.board = { period: "today", game: "all" };
+  if (app.board.game !== "all" && !GAMES[app.board.game]) app.board.game = "all";
   const root = document.getElementById("app");
   root.addEventListener("click", e => {
     const b = e.target.closest("[data-act]");

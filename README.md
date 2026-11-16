@@ -47,6 +47,8 @@ Any static host (GitHub Pages, Netlify, Vercel) can serve it as is.
 | `out(p)` | Optional; `true` fades the player's card |
 | `minPlayers` | Optional; Start is disabled below this |
 | `art()` | Optional SVG drawn behind the setup card; see [Card graphics](#card-graphics) |
+| `short` | Optional shorter title for the scoreboard's game filter (`"501"`, `"Clock"`) |
+| `stats` | Optional scoreboard columns: `{ cols, add(acc, ctx), show(acc) }`. `add` is called once per player per finished game with `ctx = { s, p, i, won, turns }` (the replayed state, the player, their index, whether they won, and their turns) and accumulates into `acc`; `show(acc)` returns one value per column |
 | `roundLabel(s)` | Optional text for the header in place of "Round N"; return an empty string to keep the default (Killer shows "Picking numbers") |
 | `live(s)` | Optional; returns `(n, m) => boolean` for whether a dart counts right now (`m` is left out when asking about a whole number). Darts that don't count are faded on the input |
 | `hint(s)` | Line shown under the current turn |
@@ -72,6 +74,8 @@ art: () => [90, 70, 50, 30].map((h, i) => artRect(140 + i * 34, 120 - h, 26, h, 
 **Input** is either a tappable SVG dartboard (`dartboardSvg`, drawn with widened double and triple rings so they can be hit with a finger) or a plain button grid. The choice is remembered.
 
 **Keep screen on** uses the Screen Wake Lock API while a game is open (on by default; toggled on the setup page or with "Screen on" in the game header). The browser drops the lock when the tab is hidden, so it is requested again on `visibilitychange`. The option is hidden where the API is missing.
+
+**Scoreboard.** Finished games are saved under `chalk.history.v1` (the last 1000), each as its setup, dart log and finish time. A game is recorded when it ends and removed again if the winning dart is undone; games ended with End game are not recorded. The scoreboard replays the saved games through the current rules, so it always matches them. It shows Today (since local midnight) or Lifetime, for all games or one. Players are ranked by wins, then win %; wins, played and win % count only games with two or more players, while each game's own columns (`stats`) include solo games too.
 
 **Players** are remembered. `roster` lists everyone ever added; `setup.players` is who is in the current game, in throwing order, by name from the roster. On the setup page, Sit out takes a player out of the game but keeps them saved, a saved name rejoins with one tap, and Delete (tapped twice) forgets them. Adding a name that is already saved, in any letter case, just brings that player back.
 
