@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chalk Darts Scorer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@400;500;600&family=Cabin+Sketch:wght@400;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  /* Layout: one screen. A pub chalkboard holds the scores; the dart keypad is
+     pinned below it on phones and sits beside it on wide screens. Single theme. */
+  --slate: #27332f;
+  --slate-deep: #1c2623;
+  --chalk: #eeece3;
+  --chalk-dim: #a6afa8;
+  --line: rgba(238, 236, 227, .22);
+  --fill: rgba(238, 236, 227, .06);
+  --yellow: #f2d56b;
+  --red: #ec6a5a;
+  /* dartboard segment colours, used only on the tappable board */
+  --seg-black: #121816; --seg-cream: #eadfc2; --seg-red: #c63d2d; --seg-green: #2c8553;
+  --display: "Cabin Sketch", "Chalkduster", "Comic Sans MS", cursive;
+  --body: "Barlow Semi Condensed", "Arial Narrow", system-ui, sans-serif;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background:
+    radial-gradient(60% 40% at 20% 10%, rgba(238, 236, 227, .05), transparent 70%),
+    radial-gradient(50% 35% at 85% 70%, rgba(238, 236, 227, .04), transparent 70%),
+    var(--slate);
+  color: var(--chalk);
+  font: 400 17px/1.4 var(--body);
+}
+button, input { font: inherit; color: inherit; }
+button { cursor: pointer; }
+button:disabled { cursor: default; opacity: .35; }
+:focus-visible { outline: 2px solid var(--yellow); outline-offset: 2px; }
+h1, h2, p, ul, ol { margin: 0; padding: 0; }
+ul, ol { list-style: none; }
+
+#app { height: 100%; max-width: 1040px; margin: 0 auto; padding: 16px; }
+.label {
+  font-size: 13px; font-weight: 600; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--chalk-dim);
+}
+.btn {
+  min-height: 48px; padding: 0 18px; border-radius: 6px;
+  border: 1.5px solid var(--line); background: var(--fill); font-weight: 600;
+}
+.btn:hover:not(:disabled) { border-color: var(--chalk); }
+.btn.primary { background: var(--yellow); border-color: var(--yellow); color: var(--slate-deep); font-size: 20px; }
+.btn.danger { color: var(--red); }
+.btn.small { min-height: 40px; padding: 0 12px; font-size: 15px; }
+.btn[aria-pressed="true"] { background: var(--chalk); border-color: var(--chalk); color: var(--slate-deep); }
+
+/* ---------- setup ---------- */
+#app.setup { overflow-y: auto; }
+.setup-wrap { max-width: 560px; margin: 0 auto; display: flex; flex-direction: column; gap: 28px; padding-bottom: 24px; }
+.brand { display: flex; align-items: baseline; gap: 14px; border-bottom: 2px solid var(--line); padding-bottom: 10px; }
+.brand h1 { font: 700 56px/1 var(--display); letter-spacing: .02em; }
+.brand p { color: var(--chalk-dim); }
+.block { display: flex; flex-direction: column; gap: 10px; }
+.games { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px; }
+.game {
+  text-align: left; padding: 12px 14px; border-radius: 6px;
+  border: 1.5px solid var(--line); background: var(--fill);
+  display: flex; flex-direction: column; gap: 2px;
+}
+.game strong { font: 700 26px/1.1 var(--display); }
+.game span { color: var(--chalk-dim); font-size: 15px; }
+.game[aria-checked="true"] { border-color: var(--yellow); }
+.game[aria-checked="true"] strong { color: var(--yellow); }
+.seg { display: flex; flex-wrap: wrap; gap: 6px; }
+.seg button {
+  flex: 1 1 0; min-height: 44px; min-width: 84px; border-radius: 6px;
+  border: 1.5px solid var(--line); background: var(--fill); font-weight: 600;
+}
+.seg button[aria-pressed="true"] { background: var(--chalk); border-color: var(--chalk); color: var(--slate-deep); }
+.opts { display: flex; flex-direction: column; gap: 8px; }
+.players { display: flex; flex-direction: column; gap: 8px; }
+.players li { display: flex; gap: 8px; }
+.players input {
+  flex: 1; min-width: 0; min-height: 48px; padding: 0 12px; border-radius: 6px;
+  border: 1.5px solid var(--line); background: var(--slate-deep); font-size: 18px;
+}
+.fine { color: var(--chalk-dim); font-size: 14px; }
+
+/* ---------- play ---------- */
+#app.play { display: flex; flex-direction: column; gap: 12px; }
+.bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.bar h1 { font: 700 30px/1 var(--display); }
+.bar .meta { color: var(--chalk-dim); flex: 1; }
+.stage { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 12px; }
+.board { flex: 1; min-height: 0; overflow: auto; border: 2px solid var(--line); border-radius: 8px; background: var(--slate-deep); padding: 12px; }
+.side { display: flex; flex-direction: column; gap: 10px; }
+
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(132px, 1fr)); gap: 10px; }
+.card { padding: 10px 12px; border-radius: 6px; border: 1.5px dashed var(--line); display: flex; flex-direction: column; }
+.card .nm { font-weight: 600; overflow-wrap: anywhere; }
+.card .big { font: 700 60px/1 var(--display); font-variant-numeric: tabular-nums; }
+.card .sub { color: var(--chalk-dim); font-size: 15px; }
+.card.on { border: 1.5px solid var(--yellow); }
+.card.on .nm, .card.on .big { color: var(--yellow); }
+.card.won { border: 1.5px solid var(--chalk); }
+.card.out { opacity: .4; }
+
+.cricket-wrap { overflow-x: auto; }
+table.cricket { border-collapse: collapse; width: 100%; text-align: center; }
+.cricket th, .cricket td { padding: 4px 8px; border-bottom: 1px solid var(--line); min-width: 56px; }
+.cricket thead th { font-weight: 600; overflow-wrap: anywhere; }
+.cricket th.on { color: var(--yellow); }
+.cricket th.num { font: 700 28px/1 var(--display); text-align: left; min-width: 64px; }
+.cricket td svg { width: 30px; height: 30px; display: block; margin: 0 auto; }
+.cricket tfoot td, .cricket tfoot th { border-bottom: 0; font: 700 34px/1.2 var(--display); font-variant-numeric: tabular-nums; }
+.cricket tfoot th { font: 600 13px/1 var(--body); letter-spacing: .12em; text-transform: uppercase; color: var(--chalk-dim); text-align: left; }
+
+.turn { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.turn .who { font-weight: 600; flex: 1; min-width: 120px; overflow-wrap: anywhere; }
+.slots { display: flex; gap: 6px; }
+.slots span {
+  width: 58px; height: 44px; display: grid; place-items: center; border-radius: 6px;
+  border: 1.5px dashed var(--line); font: 700 24px/1 var(--display);
+}
+.slots span.hit { border-style: solid; border-color: var(--chalk); }
+.note { min-height: 24px; color: var(--chalk-dim); }
+.note b { color: var(--yellow); font-weight: 600; }
+.note .bad { color: var(--red); font-weight: 600; }
+
+.banks { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.bank { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; }
+.bank .hd { font-size: 12px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--chalk-dim); text-align: center; }
+.bank button, .keys3 button {
+  min-height: 40px; padding: 0; border-radius: 6px; border: 1.5px solid var(--line);
+  background: var(--fill); font-weight: 600; font-size: 18px; font-variant-numeric: tabular-nums;
+}
+.bank button.m2 { background: rgba(238, 236, 227, .11); }
+.bank button.m3 { background: rgba(238, 236, 227, .17); }
+.bank button:hover:not(:disabled), .keys3 button:hover:not(:disabled) { border-color: var(--chalk); }
+.bank button:active:not(:disabled), .keys3 button:active:not(:disabled) { background: var(--chalk); color: var(--slate-deep); }
+.bank button.dim, .keys3 button.dim { color: var(--chalk-dim); border-style: dashed; background: none; }
+.keys3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(64px, 1fr)); gap: 5px; }
+.dartboard { display: block; width: 100%; max-height: 54vh; margin: 0 auto; touch-action: manipulation; user-select: none; -webkit-user-select: none; }
+.dartboard path, .dartboard circle { stroke: #9aa39c; stroke-width: 1; cursor: pointer; }
+.dartboard .blk { fill: var(--seg-black); } .dartboard .crm { fill: var(--seg-cream); }
+.dartboard .red { fill: var(--seg-red); } .dartboard .grn { fill: var(--seg-green); }
+.dartboard [data-act]:hover { filter: brightness(1.25); }
+.dartboard [data-act]:active { filter: brightness(1.6); }
+.dartboard .dim { opacity: .3; }
+.dartboard text { fill: var(--chalk); font: 700 19px var(--display); text-anchor: middle; dominant-baseline: central; pointer-events: none; }
+.dartboard text.dim { opacity: .45; }
+.board { min-height: 96px; }
+.keys3 button { min-height: 46px; }
+.keys3 .miss { color: var(--red); }
+
+.win { border: 2px solid var(--yellow); border-radius: 8px; padding: 18px; display: flex; flex-direction: column; gap: 14px; }
+.win h2 { font: 700 44px/1.05 var(--display); color: var(--yellow); text-wrap: balance; overflow-wrap: anywhere; }
+.win .row { display: flex; gap: 8px; flex-wrap: wrap; }
+.win .row .btn { flex: 1 1 130px; }
+
+@media (min-width: 900px) {
+  .stage { flex-direction: row; align-items: stretch; }
+  .side { width: 440px; flex: none; justify-content: flex-end; }
+  .card .big { font-size: 76px; }
+}
+@media (max-height: 640px) {
+  .bank button { min-height: 33px; }
+  .keys3 button { min-height: 40px; }
+  .card .big { font-size: 46px; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .btn, .game, .bank button, .keys3 button, .seg button { transition: border-color .12s, background-color .12s; }
+}
+</style>
+</head>
+<body>
+<div id="app" class="setup"></div>
+<script>
+"use strict";
+
+/* ================= game engines =================
+   A game is a set of pure-ish functions over a state object. The app stores only
+   the setup and the list of darts thrown; the state is rebuilt by replaying the
+   list, which makes undo a one-line pop. */
+
+const CRICKET_NUMS = [20, 19, 18, 17, 16, 15, 25];
+const HALVE_TARGETS = [
+  { l: "20", n: 20 }, { l: "16", n: 16 }, { l: "double 7", n: 7, m: 2 },
+  { l: "14", n: 14 }, { l: "18", n: 18 }, { l: "triple 10", n: 10, m: 3 }, { l: "bull", n: 25 }
+];
+
+function dartLabel(d) {
+  if (d.n === 0) return "Miss";
+  if (d.n === 25) return d.m === 2 ? "50" : "25";
+  return ["", "", "D", "T"][d.m] + d.n;
+}
+
+const ALL_DARTS = (() => {
+  const a = [];
+  for (const m of [3, 2, 1]) for (let n = 20; n >= 1; n--) a.push({ n, m, v: n * m });
+  a.push({ n: 25, m: 2, v: 50 }, { n: 25, m: 1, v: 25 });
+  return a.sort((x, y) => y.v - x.v);
+})();
+
+// After the last player's turn in the final round, the top score wins; ties share.
+function endAfterRound(s, lastRound) {
+  if (s.cur !== s.p.length - 1 || s.round !== lastRound) return;
+  const top = Math.max(...s.p.map(o => o.score));
+  s.over = true;
+  s.winners = s.p.map((o, i) => o.score === top ? i : -1).filter(i => i >= 0);
+}
+
+const killerPicking = s => s.p.some(p => !p.num);
+const killerFree = s => Array.from({ length: 20 }, (_, i) => i + 1).filter(n => !s.p.some(o => o.num === n));
+const killerTargets = (s, p) => s.p.filter(o => o !== p && o.lives > 0);
+
+function checkout(score, dartsLeft, doubleOut) {
+  if (score > 180 || score < 1) return null;
+  const fin = doubleOut ? ALL_DARTS.filter(d => d.m === 2) : ALL_DARTS;
+  for (const f of fin) if (f.v === score) return [f];
+  if (dartsLeft < 2) return null;
+  for (const a of ALL_DARTS) { if (a.v >= score) continue; for (const f of fin) if (a.v + f.v === score) return [a, f]; }
+  if (dartsLeft < 3) return null;
+  for (const a of ALL_DARTS) { if (a.v >= score) continue;
+    for (const b of ALL_DARTS) { if (a.v + b.v >= score) continue;
+      for (const f of fin) if (a.v + b.v + f.v === score) return [a, b, f]; } }
+  return null;
+}
+
+const GAMES = {
+  x01: {
+    title: "501 / 301 / 701",
+    blurb: "Count down to exactly zero.",
+    name: o => o.start + (o.doubleOut ? " · double out" : " · straight out"),
+    options: [
+      { key: "start", label: "Starting score", def: 501, choices: [[301, "301"], [501, "501"], [701, "701"]] },
+      { key: "doubleOut", label: "Finish rule", def: true, choices: [[true, "Double out"], [false, "Straight out"]] }
+    ],
+    player: o => ({ score: o.start, thrown: 0 }),
+    startTurn(s) { s.turnStart = s.p[s.cur].score; },
+    dart(s, p, d) {
+      p.thrown++;
+      const left = p.score - d.n * d.m, dbl = s.setup.opts.doubleOut;
+      if (left < 0 || (dbl && left === 1) || (left === 0 && dbl && d.m !== 2)) {
+        p.score = s.turnStart; s.note = "Bust"; return true;
+      }
+      p.score = left;
+      if (left === 0) { s.over = true; s.winners = [s.cur]; }
+      return false;
+    },
+    hint(s) {
+      const c = checkout(s.p[s.cur].score, 3 - s.darts.length, s.setup.opts.doubleOut);
+      return c ? "Checkout: <b>" + c.map(dartLabel).join(" &nbsp;") + "</b>" : "";
+    },
+    big: p => p.score,
+    sub(p, s) {
+      return p.thrown ? "avg " + ((s.setup.opts.start - p.score) / p.thrown * 3).toFixed(1) : "avg –";
+    }
+  },
+  cricket: {
+    title: "Cricket",
+    blurb: "Close 15 to 20 and the bull, then score on them.",
+    name: () => "Cricket",
+    player: () => ({ marks: Object.fromEntries(CRICKET_NUMS.map(n => [n, 0])), points: 0 }),
+    dart(s, p, d) {
+      if (!CRICKET_NUMS.includes(d.n)) return false;
+      for (let i = 0; i < d.m; i++) {
+        if (p.marks[d.n] < 3) p.marks[d.n]++;
+        else if (s.p.some(o => o !== p && o.marks[d.n] < 3)) p.points += d.n;
+      }
+      const closed = CRICKET_NUMS.every(n => p.marks[n] === 3);
+      if (closed && s.p.every(o => o.points <= p.points)) { s.over = true; s.winners = [s.cur]; }
+      return false;
+    },
+    live: () => CRICKET_NUMS,
+    hint: () => ""
+  },
+  clock: {
+    title: "Around the Clock",
+    blurb: "Hit 1 to 20 in order, then the bull.",
+    name: () => "Around the Clock",
+    player: () => ({ target: 1 }),
+    dart(s, p, d) {
+      if (d.n !== p.target) return false;
+      if (p.target === 25) { p.done = true; s.over = true; s.winners = [s.cur]; }
+      else p.target = p.target === 20 ? 25 : p.target + 1;
+      return false;
+    },
+    live: s => [s.p[s.cur].target],
+    hint(s) { const t = s.p[s.cur].target; return "Aim for <b>" + (t === 25 ? "the bull" : t) + "</b>"; },
+    big: p => p.done ? "✓" : p.target === 25 ? "Bull" : p.target,
+    sub: p => (p.done ? 21 : p.target === 25 ? 20 : p.target - 1) + " of 21 hit"
+  },
+  halve: {
+    title: "Halve-It",
+    blurb: "Seven targets. Miss one with all three darts and your score halves.",
+    name: () => "Halve-It",
+    player: () => ({ score: 40 }),
+    startTurn(s) { s.turnHit = false; },
+    dart(s, p, d) {
+      const t = HALVE_TARGETS[s.round - 1];
+      if (d.n === t.n && (!t.m || d.m === t.m)) { p.score += d.n * d.m; s.turnHit = true; }
+      return false;
+    },
+    endTurn(s, p) {
+      if (!s.turnHit) { p.score = Math.ceil(p.score / 2); s.note = "Halved"; }
+      endAfterRound(s, HALVE_TARGETS.length);
+    },
+    live: s => [HALVE_TARGETS[s.round - 1].n],
+    hint(s) { return "Target " + s.round + " of " + HALVE_TARGETS.length + ": <b>" + HALVE_TARGETS[s.round - 1].l + "</b>"; },
+    big: p => p.score,
+    sub: () => "points"
+  },
+  shanghai: {
+    title: "Shanghai",
+    blurb: "Round 1 aims at 1, round 2 at 2, and so on. Single, double and triple in one turn wins outright.",
+    name: o => "Shanghai · " + o.rounds + " rounds",
+    options: [{ key: "rounds", label: "Rounds", def: 7, choices: [[7, "7 rounds"], [20, "20 rounds"]] }],
+    player: () => ({ score: 0 }),
+    startTurn(s) { s.turnHits = []; },
+    dart(s, p, d) {
+      if (d.n !== s.round) return false;
+      p.score += d.n * d.m;
+      s.turnHits.push(d.m);
+      if ([1, 2, 3].every(m => s.turnHits.includes(m))) { s.over = true; s.winners = [s.cur]; }
+      return false;
+    },
+    endTurn(s) { endAfterRound(s, s.setup.opts.rounds); },
+    live: s => [s.round],
+    hint(s) { return "Round " + s.round + " of " + s.setup.opts.rounds + ": aim for <b>" + s.round + "</b>"; },
+    big: p => p.score,
+    sub: () => "points"
+  },
+  killer: {
+    title: "Killer",
+    blurb: "Throw for a number, hit its double to become a killer, then take everyone else's lives.",
+    name: o => "Killer · " + o.lives + " lives",
+    options: [{ key: "lives", label: "Lives", def: 3, choices: [[3, "3 lives"], [5, "5 lives"]] }],
+    minPlayers: 2,
+    player: o => ({ num: 0, lives: o.lives, killer: false }),
+    skip: (s, p) => killerPicking(s) ? !!p.num : p.lives === 0,
+    out: p => p.lives === 0,
+    dart(s, p, d) {
+      if (killerPicking(s)) {
+        if (killerFree(s).includes(d.n)) { p.num = d.n; return true; }
+        return false;
+      }
+      if (d.m !== 2) return false;
+      const t = s.p.find(o => o.num === d.n && o.lives > 0);
+      if (!t) return false;
+      if (t === p && !p.killer) { p.killer = true; return false; }
+      if (t === p) { p.lives--; s.note = "Hit own double"; }
+      else if (p.killer) t.lives--;
+      else return false;
+      const alive = s.p.filter(o => o.lives > 0);
+      if (alive.length === 1) { s.over = true; s.winners = [s.p.indexOf(alive[0])]; }
+      return p.lives === 0;
+    },
+    live(s) {
+      const p = s.p[s.cur];
+      if (killerPicking(s)) return killerFree(s);
+      return p.killer ? killerTargets(s, p).map(o => o.num) : [p.num];
+    },
+    hint(s) {
+      const p = s.p[s.cur];
+      if (killerPicking(s)) return "Throw for your number (any free 1 to 20, use your other hand)";
+      if (!p.killer) return "Hit <b>D" + p.num + "</b> to become a killer";
+      return "Killer: take lives with <b>" + killerTargets(s, p).map(o => "D" + o.num).join(" &nbsp;") + "</b>";
+    },
+    big: p => p.num || "?",
+    sub(p, s) {
+      if (!p.num) return "no number yet";
+      if (p.lives === 0) return "out";
+      return p.lives + (p.lives === 1 ? " life" : " lives") + (p.killer ? " · killer" : "");
+    }
+  }
+};
+
+// Give the chosen game a value for each of its options (older saves, or a game just picked).
+function fillOpts(setup) {
+  setup.opts = setup.opts || {};
+  for (const op of GAMES[setup.game].options || [])
+    if (!op.choices.some(([v]) => v === setup.opts[op.key])) setup.opts[op.key] = op.def;
+}
+
+function newState(setup) {
+  const g = GAMES[setup.game];
+  const s = { setup, cur: 0, round: 1, darts: [], last: null, note: "", over: false, winners: [],
+    p: setup.players.map(name => Object.assign({ name }, g.player(setup.opts))) };
+  if (g.startTurn) g.startTurn(s);
+  return s;
+}
+
+function throwDart(s, d) {
+  if (s.over) return;
+  const g = GAMES[s.setup.game], p = s.p[s.cur];
+  s.darts.push(d);
+  const endEarly = g.dart(s, p, d);
+  if (s.over) return;
+  if (endEarly || s.darts.length === 3) {
+    if (g.endTurn) g.endTurn(s, p);
+    s.last = { player: s.cur, darts: s.darts, note: s.note };
+    if (s.over) return;
+    s.darts = []; s.note = "";
+    for (let i = 0; i < s.p.length; i++) {
+      s.cur = (s.cur + 1) % s.p.length;
+      if (s.cur === 0) s.round++;
+      if (!g.skip || !g.skip(s, s.p[s.cur])) break;
+    }
+    if (g.startTurn) g.startTurn(s);
+  }
+}
+
+function replay(setup, log) {
+  const s = newState(setup);
+  for (const d of log) throwDart(s, d);
+  return s;
+}
+
+/* ================= app ================= */
+
+const KEY = "chalk.v1", OLD_KEY = "oche.v1";
+const DEFAULTS = { view: "setup", setup: { game: "x01", opts: {}, players: ["Player 1", "Player 2"] }, log: [] };
+let app = JSON.parse(JSON.stringify(DEFAULTS));
+let confirmEnd = false;
+
+function valid(a) {
+  return a && a.setup && GAMES[a.setup.game] && Array.isArray(a.setup.players) && a.setup.players.length && Array.isArray(a.log);
+}
+function load() {
+  try {
+    const old = localStorage.getItem(OLD_KEY); // carry over a game saved before the rename
+    if (old !== null) { if (localStorage.getItem(KEY) === null) localStorage.setItem(KEY, old); localStorage.removeItem(OLD_KEY); }
+    const a = JSON.parse(localStorage.getItem(KEY)); if (valid(a)) app = a;
+  } catch (e) { /* start fresh */ }
+}
+function save() {
+  try { localStorage.setItem(KEY, JSON.stringify(app)); } catch (e) { /* keep playing without it */ }
+}
+const tooFew = st => st.players.length < (GAMES[st.game].minPlayers || 1);
+const AWAKE_CHOICES = [[true, "Keep on"], [false, "Normal"]];
+// Choices are sent as their index, so act() maps them back to real values.
+const seg = (label, act, choices, current, key) => `<div class="seg" role="group" aria-label="${label}">${choices.map(([v, t], i) =>
+  `<button aria-pressed="${current === v}" data-act="${act}" data-v="${i}"${key ? ` data-k="${key}"` : ""}>${t}</button>`).join("")}</div>`;
+const esc = t => String(t).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+function setupView() {
+  const st = app.setup, o = st.opts, g = GAMES[st.game], few = tooFew(st);
+  const games = Object.entries(GAMES).map(([id, g]) =>
+    `<button class="game" role="radio" aria-checked="${st.game === id}" data-act="game" data-v="${id}"><strong>${g.title}</strong><span>${g.blurb}</span></button>`).join("");
+  const groups = (g.options || []).map(op => seg(op.label, "opt", op.choices, o[op.key], op.key)).join("");
+  const opts = groups && `<div class="opts">${groups}</div>`;
+  const players = st.players.map((n, i) => `
+    <li><input id="p${i}" data-i="${i}" value="${esc(n)}" maxlength="14" autocomplete="off" aria-label="Player ${i + 1} name">
+    <button class="btn" data-act="rm" data-v="${i}" aria-label="Remove player ${i + 1}" ${st.players.length < 2 ? "disabled" : ""}>Remove</button></li>`).join("");
+  return `<div class="setup-wrap">
+    <header class="brand"><h1>Chalk</h1><p>Darts scorer</p></header>
+    <section class="block"><h2 class="label">Game</h2><div class="games" role="radiogroup" aria-label="Game">${games}</div>${opts}</section>
+    <section class="block"><h2 class="label">Players, in throwing order</h2><ol class="players">${players}</ol>
+      <button class="btn" data-act="add" ${st.players.length >= 8 ? "disabled" : ""}>Add player</button></section>
+    ${canWake ? `<section class="block"><h2 class="label">Screen during a game</h2>${seg("Screen during a game", "awake", AWAKE_CHOICES, awake())}</section>` : ""}
+    <button class="btn primary" data-act="go" ${few ? "disabled" : ""}>Start game</button>
+    ${few ? `<p class="fine">${g.title} needs at least ${g.minPlayers} players.</p>` : ""}
+    <p class="fine">Scores stay in this browser. Nothing is sent to a server.</p>
+  </div>`;
+}
+
+function markSvg(k) {
+  const l1 = '<line x1="6" y1="24" x2="24" y2="6"/>', l2 = '<line x1="6" y1="6" x2="24" y2="24"/>', c = '<circle cx="15" cy="15" r="12.5"/>';
+  const label = ["no marks", "1 mark", "2 marks", "closed"][k];
+  return `<svg viewBox="0 0 30 30" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" role="img" aria-label="${label}">${k > 0 ? l1 : ""}${k > 1 ? l2 : ""}${k > 2 ? c : ""}</svg>`;
+}
+
+/* Tappable dartboard. Not to scale: the double and triple rings are widened so a finger can hit them. */
+const BOARD_ORDER = [20, 1, 18, 4, 13, 6, 10, 15, 2, 17, 3, 19, 7, 16, 8, 11, 14, 9, 12, 5];
+const RINGS = [[44, 100, 1], [100, 134, 3], [134, 166, 1], [166, 200, 2]]; // inner radius, outer radius, multiplier
+function dartboardSvg(dim) {
+  const pt = (r, deg) => { const a = deg * Math.PI / 180; return (r * Math.sin(a)).toFixed(1) + " " + (-r * Math.cos(a)).toFixed(1); };
+  const names = ["", "Single", "Double", "Triple"];
+  let out = "";
+  BOARD_ORDER.forEach((n, i) => {
+    const a1 = i * 18 - 9, a2 = i * 18 + 9, black = i % 2 === 0, d = dim(n) ? " dim" : "";
+    for (const [r1, r2, m] of RINGS) {
+      const cls = (m === 1 ? (black ? "blk" : "crm") : (black ? "red" : "grn")) + d;
+      out += `<path class="${cls}" data-act="n" data-v="${n}" data-m="${m}" aria-label="${names[m]} ${n}" d="M${pt(r2, a1)}A${r2} ${r2} 0 0 1 ${pt(r2, a2)}L${pt(r1, a2)}A${r1} ${r1} 0 0 0 ${pt(r1, a1)}Z"/>`;
+    }
+    const [x, y] = pt(214, i * 18).split(" ");
+    out += `<text class="${d.trim()}" x="${x}" y="${y}">${n}</text>`;
+  });
+  const b = dim(25) ? " dim" : "";
+  out += `<circle class="grn${b}" r="44" data-act="n" data-v="25" data-m="1" aria-label="Outer bull, 25"/><circle class="red${b}" r="22" data-act="n" data-v="25" data-m="2" aria-label="Bullseye, 50"/>`;
+  return `<svg class="dartboard" viewBox="-230 -230 460 460" role="group" aria-label="Dartboard. Tap where the dart landed.">${out}</svg>`;
+}
+
+function cardClass(s, g, p, i) {
+  if (s.over) return s.winners.includes(i) ? "won" : "";
+  if (i === s.cur) return "on";
+  return g.out && g.out(p) ? "out" : "";
+}
+
+function boardView(s) {
+  const g = GAMES[s.setup.game];
+  if (s.setup.game === "cricket") {
+    const head = s.p.map((p, i) => `<th scope="col" class="${!s.over && i === s.cur ? "on" : ""}">${esc(p.name)}</th>`).join("");
+    const rows = CRICKET_NUMS.map(n => `<tr><th scope="row" class="num">${n === 25 ? "Bull" : n}</th>${s.p.map(p => `<td>${markSvg(p.marks[n])}</td>`).join("")}</tr>`).join("");
+    const foot = s.p.map(p => `<td>${p.points}</td>`).join("");
+    return `<div class="cricket-wrap"><table class="cricket"><thead><tr><th></th>${head}</tr></thead><tbody>${rows}</tbody><tfoot><tr><th scope="row">Points</th>${foot}</tr></tfoot></table></div>`;
+  }
+  return `<ul class="cards">${s.p.map((p, i) => {
+    return `<li class="card ${cardClass(s, g, p, i)}"><span class="nm">${esc(p.name)}</span><span class="big">${g.big(p, s)}</span><span class="sub">${g.sub(p, s)}</span></li>`;
+  }).join("")}</ul>`;
+}
+
+function playView() {
+  const s = replay(app.setup, app.log), g = GAMES[app.setup.game];
+  const slots = [0, 1, 2].map(i => s.darts[i] ? `<span class="hit">${dartLabel(s.darts[i])}</span>` : "<span>·</span>").join("");
+  let note = "";
+  if (!s.over) {
+    if (s.darts.length === 0 && s.last) {
+      const l = s.last;
+      note = `${esc(s.p[l.player].name)} threw ${l.darts.map(dartLabel).join(", ")}${l.note ? ` <span class="bad">${l.note}</span>` : ""}. `;
+    }
+    note += g.hint(s);
+  }
+  let side;
+  if (s.over) {
+    const names = s.winners.map(i => esc(s.p[i].name));
+    const head = names.length > 1 ? names.join(" and ") + " tie" : names[0] + " wins";
+    side = `<div class="win"><h2>${head}</h2><div class="row">
+      <button class="btn primary" data-act="again">Play again</button>
+      <button class="btn" data-act="undo">Undo last dart</button>
+      <button class="btn" data-act="new">Change game</button></div>
+      <p class="fine">Play again keeps the same game and moves the first player to the back of the order.</p></div>`;
+  } else {
+    const live = g.live ? g.live(s) : null;
+    const dim = n => live && !live.includes(n) ? "dim" : "";
+    const bank = from => `<div class="bank"><span class="hd">Single</span><span class="hd">Double</span><span class="hd">Triple</span>${
+      Array.from({ length: 10 }, (_, i) => from - i).map(n => [1, 2, 3].map(m =>
+        `<button class="${dim(n)} m${m}" data-act="n" data-v="${n}" data-m="${m}">${["", "", "D", "T"][m]}${n}</button>`).join("")).join("")}</div>`;
+    side = `
+      <div class="turn"><span class="who">${esc(s.p[s.cur].name)} to throw</span><div class="slots" aria-label="Darts this turn">${slots}</div></div>
+      <p class="note" aria-live="polite">${note}</p>
+      ${app.input === "keys" ? `<div class="banks">${bank(20)}${bank(10)}</div>` : dartboardSvg(n => !!dim(n))}
+      <div class="keys3">
+        ${app.input === "keys" ? `<button class="${dim(25)}" data-act="n" data-v="25" data-m="1" aria-label="Outer bull, 25">25</button>
+        <button class="${dim(25)}" data-act="n" data-v="25" data-m="2" aria-label="Bullseye, 50">Bull</button>` : ""}
+        <button class="miss" data-act="n" data-v="0" data-m="1">Miss</button>
+        <button data-act="undo" ${app.log.length ? "" : "disabled"}>Undo</button>
+        <button data-act="input" data-v="${app.input === "keys" ? "board" : "keys"}">${app.input === "keys" ? "Board" : "Keys"}</button>
+      </div>`;
+  }
+  return `
+    <header class="bar"><h1>${g.name(app.setup.opts)}</h1><span class="meta">Round ${s.round}</span>
+      ${canWake ? `<button class="btn small" aria-pressed="${awake()}" data-act="awake" data-v="${AWAKE_CHOICES.findIndex(([v]) => v !== awake())}" title="Stop the screen going to sleep during the game">Screen on</button>` : ""}
+      <button class="btn small danger" data-act="end">${confirmEnd ? "Tap again to end" : "End game"}</button></header>
+    <div class="stage"><section class="board" aria-label="Scoreboard">${boardView(s)}</section><section class="side">${side}</section></div>`;
+}
+
+function render() {
+  const root = document.getElementById("app");
+  root.className = app.view;
+  root.innerHTML = app.view === "play" ? playView() : setupView();
+  syncWakeLock();
+}
+
+/* Keep the screen on while a game is open. The browser drops the lock whenever
+   the tab is hidden, so it is asked for again when the tab comes back. */
+const canWake = typeof navigator !== "undefined" && "wakeLock" in navigator;
+const awake = () => app.awake !== false;
+let wakeLock = null, wakePending = false, wakeRefused = false;
+async function syncWakeLock() {
+  if (!canWake || wakePending) return;
+  const want = awake() && app.view === "play" && document.visibilityState === "visible";
+  if (want && !wakeLock && !wakeRefused) {
+    wakePending = true;
+    try {
+      const l = await navigator.wakeLock.request("screen");
+      l.addEventListener("release", () => { if (wakeLock === l) wakeLock = null; });
+      wakeLock = l;
+    } catch (e) {
+      // Refused (battery saver, policy). Don't retry on every render; try again when the tab returns or the setting is toggled.
+      wakeRefused = true;
+    }
+    wakePending = false;
+    syncWakeLock(); // settings may have changed while waiting
+  } else if (!want && wakeLock) {
+    const l = wakeLock; wakeLock = null; l.release();
+  }
+}
+
+function act({ act: a, v, m, k }) {
+  const st = app.setup;
+  if (a !== "end") confirmEnd = false;
+  switch (a) {
+    case "game": st.game = v; fillOpts(st); break;
+    case "opt": {
+      const op = (GAMES[st.game].options || []).find(o => o.key === k);
+      if (!op || !op.choices[v]) return;
+      st.opts[k] = op.choices[v][0]; break;
+    }
+    case "add": if (st.players.length < 8) st.players.push("Player " + (st.players.length + 1)); break;
+    case "rm": if (st.players.length > 1) st.players.splice(+v, 1); break;
+    case "go":
+      if (tooFew(st)) return;
+      st.players = st.players.map((n, i) => n.trim() || "Player " + (i + 1));
+      app.log = []; app.view = "play"; break;
+    case "n": app.log.push({ n: +v, m: +m || 1 }); break;
+    case "undo": app.log.pop(); break;
+    case "input": app.input = v; break;
+    case "awake": if (!AWAKE_CHOICES[v]) return; app.awake = AWAKE_CHOICES[v][0]; wakeRefused = false; break;
+    case "again": st.players.push(st.players.shift()); app.log = []; break;
+    case "new": app.log = []; app.view = "setup"; break;
+    case "end":
+      if (!confirmEnd) { confirmEnd = true; } else { confirmEnd = false; app.log = []; app.view = "setup"; }
+      break;
+    default: return;
+  }
+  save(); render();
+}
+
+function start(data) {
+  if (valid(data)) app = data; else load();
+  fillOpts(app.setup);
+  const root = document.getElementById("app");
+  root.addEventListener("click", e => {
+    const b = e.target.closest("[data-act]");
+    if (b && !b.disabled) act(b.dataset);
+  });
+  root.addEventListener("input", e => {
+    if (e.target.matches(".players input")) { app.setup.players[+e.target.dataset.i] = e.target.value; save(); }
+  });
+  document.addEventListener("visibilitychange", () => { wakeRefused = false; syncWakeLock(); });
+  render();
+}
+
+if (typeof document !== "undefined") {
+  const hot = window.claude && window.claude.hot;
+  if (hot && hot.snapshot) hot.snapshot(() => app);
+  if (hot && hot.ready) hot.ready(start); else start((hot && hot.data) || {});
+}
+</script>
+</body>
+</html>
