@@ -20,7 +20,7 @@ Any static host (GitHub Pages, Netlify, Vercel) can serve it as is.
 
 | Game | Rules implemented |
 | --- | --- |
-| 501 / 301 / 701 | Double out or straight out, bust handling, three-dart average, checkout suggestions |
+| 501 / 301 / 701 | Double out or straight out, bust handling, three-dart average, checkout suggestions (fewest darts, then easy setup darts and the preferred finishing doubles: D20, D16, D8, …, bull last) |
 | Cricket | 15 to 20 and bull, three marks to close, points until everyone has closed |
 | Around the Clock | 1 to 20 in order, then the bull; any multiplier counts as a hit |
 | Halve-It | Start at 40; targets 20, 16, double 7, 14, 18, triple 10, bull; no hit in a turn halves the score |
@@ -43,7 +43,8 @@ Any static host (GitHub Pages, Netlify, Vercel) can serve it as is.
 | `skip(s, p)` | Optional; `true` passes over that player in the turn order (Killer uses it for players who are out) |
 | `out(p)` | Optional; `true` fades the player's card |
 | `minPlayers` | Optional; Start is disabled below this |
-| `live(s)` | Optional list of numbers that count right now; the rest are faded on the input |
+| `roundLabel(s)` | Optional text for the header in place of "Round N"; return an empty string to keep the default (Killer shows "Picking numbers") |
+| `live(s)` | Optional; returns `(n, m) => boolean` for whether a dart counts right now (`m` is left out when asking about a whole number). Darts that don't count are faded on the input |
 | `hint(s)` | Line shown under the current turn |
 | `big(p, s)`, `sub(p, s)` | Main figure and caption on a player card (Cricket draws its own table in `boardView`) |
 

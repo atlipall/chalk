@@ -191,6 +191,8 @@ const HALVE_TARGETS = [
   { l: "20", n: 20 }, { l: "16", n: 16 }, { l: "double 7", n: 7, m: 2 },
   { l: "14", n: 14 }, { l: "18", n: 18 }, { l: "triple 10", n: 10, m: 3 }, { l: "bull", n: 25 }
 ];
+// m left out means "any ring of n": used to decide whether a whole number is faded.
+const halveHit = (t, n, m) => n === t.n && (!t.m || m === undefined || m === t.m);
 
 function dartLabel(d) {
   if (d.n === 0) return "Miss";
@@ -207,7 +209,7 @@ const ALL_DARTS = (() => {
 
 // After the last player's turn in the final round, the top score wins; ties share.
 function endAfterRound(s, lastRound) {
-  if (s.cur !== s.p.length - 1 || s.round !== lastRound) return;
+  if ((s.cur + 1) % s.p.length !== s.lead || s.round !== lastRound) return;
   const top = Math.max(...s.p.map(o => o.score));
   s.over = true;
   s.winners = s.p.map((o, i) => o.score === top ? i : -1).filter(i => i >= 0);
@@ -217,17 +219,38 @@ const killerPicking = s => s.p.some(p => !p.num);
 const killerFree = s => Array.from({ length: 20 }, (_, i) => i + 1).filter(n => !s.p.some(o => o.num === n));
 const killerTargets = (s, p) => s.p.filter(o => o !== p && o.lives > 0);
 
+/* Checkout advice. Every route that finishes is scored and the cheapest wins:
+   fewest darts first, then easy setup darts (a single beats a big treble beats a
+   small treble or a double), then the finishing double players prefer. This keeps
+   advice like 60 → 20 D20 rather than T18 D3. */
+const DOUBLE_PREF = [20, 16, 8, 18, 12, 10, 14, 4, 6, 2, 19, 17, 15, 13, 11, 9, 7, 5, 3, 1, 25];
+const BIG_TREBLE = { 20: 10, 19: 12, 18: 13, 17: 14 };
+function setupCost(d) {
+  if (d.m === 1) return d.n === 25 ? 10 : 0;
+  if (d.m === 3) return BIG_TREBLE[d.n] || 20;
+  return d.n === 25 ? 25 : 30;
+}
+const finishCost = (d, doubleOut) => doubleOut ? DOUBLE_PREF.indexOf(d.n) * 2 : setupCost(d);
+const checkoutMemo = new Map();
+
 function checkout(score, dartsLeft, doubleOut) {
-  if (score > 180 || score < 1) return null;
+  if (score > 180 || score < 1 || dartsLeft < 1) return null;
+  const key = score + "/" + dartsLeft + "/" + doubleOut;
+  if (checkoutMemo.has(key)) return checkoutMemo.get(key);
   const fin = doubleOut ? ALL_DARTS.filter(d => d.m === 2) : ALL_DARTS;
-  for (const f of fin) if (f.v === score) return [f];
-  if (dartsLeft < 2) return null;
-  for (const a of ALL_DARTS) { if (a.v >= score) continue; for (const f of fin) if (a.v + f.v === score) return [a, f]; }
-  if (dartsLeft < 3) return null;
-  for (const a of ALL_DARTS) { if (a.v >= score) continue;
-    for (const b of ALL_DARTS) { if (a.v + b.v >= score) continue;
-      for (const f of fin) if (a.v + b.v + f.v === score) return [a, b, f]; } }
-  return null;
+  let best = null, bestCost = Infinity;
+  const consider = (setup, f) => {
+    const cost = setup.reduce((c, d) => c + setupCost(d), 0) + finishCost(f, doubleOut);
+    if (cost < bestCost) { bestCost = cost; best = doubleOut ? [...setup, f] : [...setup, f].sort((x, y) => y.v - x.v); }
+  };
+  for (const f of fin) if (f.v === score) consider([], f);
+  if (!best && dartsLeft >= 2)
+    for (const f of fin) for (const a of ALL_DARTS) if (a.v + f.v === score) consider([a], f);
+  if (!best && dartsLeft >= 3)
+    for (const f of fin) for (const a of ALL_DARTS) for (const b of ALL_DARTS)
+      if (b.v <= a.v && a.v + b.v + f.v === score) consider([a, b], f);
+  checkoutMemo.set(key, best);
+  return best;
 }
 
 const GAMES = {
@@ -275,7 +298,7 @@ const GAMES = {
       if (closed && s.p.every(o => o.points <= p.points)) { s.over = true; s.winners = [s.cur]; }
       return false;
     },
-    live: () => CRICKET_NUMS,
+    live: () => n => CRICKET_NUMS.includes(n),
     hint: () => ""
   },
   clock: {
@@ -289,7 +312,7 @@ const GAMES = {
       else p.target = p.target === 20 ? 25 : p.target + 1;
       return false;
     },
-    live: s => [s.p[s.cur].target],
+    live: s => n => n === s.p[s.cur].target,
     hint(s) { const t = s.p[s.cur].target; return "Aim for <b>" + (t === 25 ? "the bull" : t) + "</b>"; },
     big: p => p.done ? "✓" : p.target === 25 ? "Bull" : p.target,
     sub: p => (p.done ? 21 : p.target === 25 ? 20 : p.target - 1) + " of 21 hit"
@@ -302,14 +325,14 @@ const GAMES = {
     startTurn(s) { s.turnHit = false; },
     dart(s, p, d) {
       const t = HALVE_TARGETS[s.round - 1];
-      if (d.n === t.n && (!t.m || d.m === t.m)) { p.score += d.n * d.m; s.turnHit = true; }
+      if (halveHit(t, d.n, d.m)) { p.score += d.n * d.m; s.turnHit = true; }
       return false;
     },
     endTurn(s, p) {
       if (!s.turnHit) { p.score = Math.ceil(p.score / 2); s.note = "Halved"; }
       endAfterRound(s, HALVE_TARGETS.length);
     },
-    live: s => [HALVE_TARGETS[s.round - 1].n],
+    live: s => (n, m) => halveHit(HALVE_TARGETS[s.round - 1], n, m),
     hint(s) { return "Target " + s.round + " of " + HALVE_TARGETS.length + ": <b>" + HALVE_TARGETS[s.round - 1].l + "</b>"; },
     big: p => p.score,
     sub: () => "points"
@@ -329,7 +352,7 @@ const GAMES = {
       return false;
     },
     endTurn(s) { endAfterRound(s, s.setup.opts.rounds); },
-    live: s => [s.round],
+    live: s => n => n === s.round,
     hint(s) { return "Round " + s.round + " of " + s.setup.opts.rounds + ": aim for <b>" + s.round + "</b>"; },
     big: p => p.score,
     sub: () => "points"
@@ -342,11 +365,15 @@ const GAMES = {
     minPlayers: 2,
     player: o => ({ num: 0, lives: o.lives, killer: false }),
     skip: (s, p) => killerPicking(s) ? !!p.num : p.lives === 0,
+    roundLabel: s => killerPicking(s) ? "Picking numbers" : "",
     out: p => p.lives === 0,
     dart(s, p, d) {
       if (killerPicking(s)) {
-        if (killerFree(s).includes(d.n)) { p.num = d.n; return true; }
-        return false;
+        if (!killerFree(s).includes(d.n)) return false;
+        p.num = d.n;
+        // Picking is done: round 1 starts with the next player.
+        if (!killerPicking(s)) { s.lead = (s.cur + 1) % s.p.length; s.round = 0; }
+        return true;
       }
       if (d.m !== 2) return false;
       const t = s.p.find(o => o.num === d.n && o.lives > 0);
@@ -361,14 +388,16 @@ const GAMES = {
     },
     live(s) {
       const p = s.p[s.cur];
-      if (killerPicking(s)) return killerFree(s);
-      return p.killer ? killerTargets(s, p).map(o => o.num) : [p.num];
+      if (killerPicking(s)) { const free = killerFree(s); return n => free.includes(n); }
+      const nums = p.killer ? killerTargets(s, p).map(o => o.num) : [p.num];
+      return (n, m) => nums.includes(n) && (m === undefined || m === 2);
     },
     hint(s) {
       const p = s.p[s.cur];
       if (killerPicking(s)) return "Throw for your number (any free 1 to 20, use your other hand)";
-      if (!p.killer) return "Hit <b>D" + p.num + "</b> to become a killer";
-      return "Killer: take lives with <b>" + killerTargets(s, p).map(o => "D" + o.num).join(" &nbsp;") + "</b>";
+      const dbl = n => dartLabel({ n, m: 2 });
+      if (!p.killer) return "Hit <b>" + dbl(p.num) + "</b> to become a killer";
+      return "Killer: take lives with <b>" + killerTargets(s, p).map(o => dbl(o.num)).join(" &nbsp;") + "</b>. Your own " + dbl(p.num) + " costs you a life.";
     },
     big: p => p.num || "?",
     sub(p, s) {
@@ -388,7 +417,7 @@ function fillOpts(setup) {
 
 function newState(setup) {
   const g = GAMES[setup.game];
-  const s = { setup, cur: 0, round: 1, darts: [], last: null, note: "", over: false, winners: [],
+  const s = { setup, cur: 0, lead: 0, round: 1, darts: [], last: null, note: "", over: false, winners: [],
     p: setup.players.map(name => Object.assign({ name }, g.player(setup.opts))) };
   if (g.startTurn) g.startTurn(s);
   return s;
@@ -407,7 +436,7 @@ function throwDart(s, d) {
     s.darts = []; s.note = "";
     for (let i = 0; i < s.p.length; i++) {
       s.cur = (s.cur + 1) % s.p.length;
-      if (s.cur === 0) s.round++;
+      if (s.cur === s.lead) s.round++;
       if (!g.skip || !g.skip(s, s.p[s.cur])) break;
     }
     if (g.startTurn) g.startTurn(s);
@@ -477,21 +506,21 @@ function markSvg(k) {
 /* Tappable dartboard. Not to scale: the double and triple rings are widened so a finger can hit them. */
 const BOARD_ORDER = [20, 1, 18, 4, 13, 6, 10, 15, 2, 17, 3, 19, 7, 16, 8, 11, 14, 9, 12, 5];
 const RINGS = [[44, 100, 1], [100, 134, 3], [134, 166, 1], [166, 200, 2]]; // inner radius, outer radius, multiplier
-function dartboardSvg(dim) {
+function dartboardSvg(isDim) {
+  const dim = (n, m) => isDim(n, m) ? " dim" : "";
   const pt = (r, deg) => { const a = deg * Math.PI / 180; return (r * Math.sin(a)).toFixed(1) + " " + (-r * Math.cos(a)).toFixed(1); };
   const names = ["", "Single", "Double", "Triple"];
   let out = "";
   BOARD_ORDER.forEach((n, i) => {
-    const a1 = i * 18 - 9, a2 = i * 18 + 9, black = i % 2 === 0, d = dim(n) ? " dim" : "";
+    const a1 = i * 18 - 9, a2 = i * 18 + 9, black = i % 2 === 0;
     for (const [r1, r2, m] of RINGS) {
-      const cls = (m === 1 ? (black ? "blk" : "crm") : (black ? "red" : "grn")) + d;
+      const cls = (m === 1 ? (black ? "blk" : "crm") : (black ? "red" : "grn")) + dim(n, m);
       out += `<path class="${cls}" data-act="n" data-v="${n}" data-m="${m}" aria-label="${names[m]} ${n}" d="M${pt(r2, a1)}A${r2} ${r2} 0 0 1 ${pt(r2, a2)}L${pt(r1, a2)}A${r1} ${r1} 0 0 0 ${pt(r1, a1)}Z"/>`;
     }
     const [x, y] = pt(214, i * 18).split(" ");
-    out += `<text class="${d.trim()}" x="${x}" y="${y}">${n}</text>`;
+    out += `<text class="${dim(n).trim()}" x="${x}" y="${y}">${n}</text>`;
   });
-  const b = dim(25) ? " dim" : "";
-  out += `<circle class="grn${b}" r="44" data-act="n" data-v="25" data-m="1" aria-label="Outer bull, 25"/><circle class="red${b}" r="22" data-act="n" data-v="25" data-m="2" aria-label="Bullseye, 50"/>`;
+  out += `<circle class="grn${dim(25, 1)}" r="44" data-act="n" data-v="25" data-m="1" aria-label="Outer bull, 25"/><circle class="red${dim(25, 2)}" r="22" data-act="n" data-v="25" data-m="2" aria-label="Bullseye, 50"/>`;
   return `<svg class="dartboard" viewBox="-230 -230 460 460" role="group" aria-label="Dartboard. Tap where the dart landed.">${out}</svg>`;
 }
 
@@ -536,24 +565,25 @@ function playView() {
       <p class="fine">Play again keeps the same game and moves the first player to the back of the order.</p></div>`;
   } else {
     const live = g.live ? g.live(s) : null;
-    const dim = n => live && !live.includes(n) ? "dim" : "";
+    const isDim = (n, m) => !!live && !live(n, m);
+    const dim = (n, m) => isDim(n, m) ? "dim" : "";
     const bank = from => `<div class="bank"><span class="hd">Single</span><span class="hd">Double</span><span class="hd">Triple</span>${
       Array.from({ length: 10 }, (_, i) => from - i).map(n => [1, 2, 3].map(m =>
-        `<button class="${dim(n)} m${m}" data-act="n" data-v="${n}" data-m="${m}">${["", "", "D", "T"][m]}${n}</button>`).join("")).join("")}</div>`;
+        `<button class="${dim(n, m)} m${m}" data-act="n" data-v="${n}" data-m="${m}">${["", "", "D", "T"][m]}${n}</button>`).join("")).join("")}</div>`;
     side = `
       <div class="turn"><span class="who">${esc(s.p[s.cur].name)} to throw</span><div class="slots" aria-label="Darts this turn">${slots}</div></div>
       <p class="note" aria-live="polite">${note}</p>
-      ${app.input === "keys" ? `<div class="banks">${bank(20)}${bank(10)}</div>` : dartboardSvg(n => !!dim(n))}
+      ${app.input === "keys" ? `<div class="banks">${bank(20)}${bank(10)}</div>` : dartboardSvg(isDim)}
       <div class="keys3">
-        ${app.input === "keys" ? `<button class="${dim(25)}" data-act="n" data-v="25" data-m="1" aria-label="Outer bull, 25">25</button>
-        <button class="${dim(25)}" data-act="n" data-v="25" data-m="2" aria-label="Bullseye, 50">Bull</button>` : ""}
+        ${app.input === "keys" ? `<button class="${dim(25, 1)}" data-act="n" data-v="25" data-m="1" aria-label="Outer bull, 25">25</button>
+        <button class="${dim(25, 2)}" data-act="n" data-v="25" data-m="2" aria-label="Bullseye, 50">Bull</button>` : ""}
         <button class="miss" data-act="n" data-v="0" data-m="1">Miss</button>
         <button data-act="undo" ${app.log.length ? "" : "disabled"}>Undo</button>
         <button data-act="input" data-v="${app.input === "keys" ? "board" : "keys"}">${app.input === "keys" ? "Board" : "Keys"}</button>
       </div>`;
   }
   return `
-    <header class="bar"><h1>${g.name(app.setup.opts)}</h1><span class="meta">Round ${s.round}</span>
+    <header class="bar"><h1>${g.name(app.setup.opts)}</h1><span class="meta">${(g.roundLabel && g.roundLabel(s)) || "Round " + s.round}</span>
       ${canWake ? `<button class="btn small" aria-pressed="${awake()}" data-act="awake" data-v="${AWAKE_CHOICES.findIndex(([v]) => v !== awake())}" title="Stop the screen going to sleep during the game">Screen on</button>` : ""}
       <button class="btn small danger" data-act="end">${confirmEnd ? "Tap again to end" : "End game"}</button></header>
     <div class="stage"><section class="board" aria-label="Scoreboard">${boardView(s)}</section><section class="side">${side}</section></div>`;
