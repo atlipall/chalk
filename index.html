@@ -149,7 +149,8 @@ dialog.rules::backdrop { background: rgba(10, 14, 13, .7); overflow: hidden; ove
   flex: 1; min-width: 0; min-height: 48px; padding: 0 12px; border-radius: 6px;
   border: 1.5px solid var(--line); background: var(--slate-deep); font-size: 18px;
 }
-.pname { display: flex; align-items: center; overflow-wrap: anywhere; }
+.pname { display: flex; align-items: center; gap: 8px; overflow-wrap: anywhere; }
+.pname .lvl { color: var(--chalk-dim); font-size: 15px; }
 .addp { display: flex; gap: 8px; }
 .saved { display: flex; flex-wrap: wrap; gap: 8px; }
 .saved li { display: flex; }
@@ -225,6 +226,7 @@ table.cricket { border-collapse: collapse; width: 100%; text-align: center; }
 .board { min-height: 96px; }
 .keys3 button { min-height: 46px; }
 .keys3 .miss { color: var(--red); }
+.busy { opacity: .55; }
 
 .win { border: 2px solid var(--yellow); border-radius: 8px; padding: 18px; display: flex; flex-direction: column; gap: 14px; }
 .win h2 { font: 700 44px/1.05 var(--display); color: var(--yellow); text-wrap: balance; overflow-wrap: anywhere; }
@@ -397,6 +399,22 @@ const GAMES = {
       const c = checkout(s.p[s.cur].score, 3 - s.darts.length, s.setup.opts.doubleOut);
       return c ? "Checkout: <b>" + c.map(dartLabel).join(" &nbsp;") + "</b>" : "";
     },
+    // The suggested checkout; otherwise T20, or near the end the dart that leaves the easiest finish.
+    aim(s) {
+      const score = s.p[s.cur].score, dbl = s.setup.opts.doubleOut;
+      const c = checkout(score, 3 - s.darts.length, dbl);
+      if (c) return c[0];
+      if (score > 100) return { n: 20, m: 3 };
+      let best = null, bestCost = Infinity;
+      for (const d of ALL_DARTS) {
+        const rest = score - d.v;
+        if (rest < (dbl ? 2 : 1)) continue;
+        const f = checkout(rest, 3, dbl);
+        const cost = (f ? f.length * 100 + finishCost(f[f.length - 1], dbl) : 1000) + setupCost(d);
+        if (cost < bestCost) { bestCost = cost; best = d; }
+      }
+      return best || { n: 20, m: 1 };
+    },
     big: p => p.score,
     sub(p, s) {
       return "avg " + x01Avg(s.setup.opts.start - p.score, p.thrown);
@@ -444,7 +462,17 @@ const GAMES = {
       return false;
     },
     live: () => n => CRICKET_NUMS.includes(n),
-    hint: () => ""
+    hint: () => "",
+    // Score on a number only it has closed when behind; otherwise close the highest open number.
+    aim(s) {
+      const p = s.p[s.cur], others = s.p.filter(o => o !== p);
+      const scoring = CRICKET_NUMS.filter(n => p.marks[n] === 3 && others.some(o => o.marks[n] < 3));
+      const open = CRICKET_NUMS.filter(n => p.marks[n] < 3);
+      const behind = others.some(o => o.points >= p.points);
+      if (behind && scoring.length) return { n: scoring[0], m: 3 };
+      if (open.length) return { n: open[0], m: 3 };
+      return { n: scoring[0] ?? 20, m: 3 };
+    }
   },
   clock: {
     title: "Around the Clock",
@@ -477,6 +505,7 @@ const GAMES = {
     },
     live: s => n => n === s.p[s.cur].target,
     hint(s) { const t = s.p[s.cur].target; return "Aim for <b>" + (t === 25 ? "the bull" : t) + "</b>"; },
+    aim: s => ({ n: s.p[s.cur].target, m: 1 }),
     big: p => p.done ? "✓" : p.target === 25 ? "Bull" : p.target,
     sub: p => (p.done ? 21 : p.target === 25 ? 20 : p.target - 1) + " of 21 hit"
   },
@@ -517,6 +546,11 @@ const GAMES = {
     },
     live: s => (n, m) => halveHit(HALVE_TARGETS[s.round - 1], n, m),
     hint(s) { return "Target " + s.round + " of " + HALVE_TARGETS.length + ": <b>" + HALVE_TARGETS[s.round - 1].l + "</b>"; },
+    // The single until the turn has a hit (so it isn't halved), then the treble for points.
+    aim(s) {
+      const t = HALVE_TARGETS[s.round - 1];
+      return { n: t.n, m: t.m || (s.turnHit ? 3 : 1) };
+    },
     big: p => p.score,
     sub: () => "points"
   },
@@ -552,6 +586,11 @@ const GAMES = {
     endTurn(s) { endAfterRound(s, s.setup.opts.rounds); },
     live: s => n => n === s.round,
     hint(s) { return "Round " + s.round + " of " + s.setup.opts.rounds + ": aim for <b>" + s.round + "</b>"; },
+    // Go for the rings still missing from a Shanghai while one is possible, otherwise the treble.
+    aim(s) {
+      const missing = [3, 1, 2].filter(m => !s.turnHits.includes(m));
+      return { n: s.round, m: missing.length <= 3 - s.darts.length ? missing[0] : 3 };
+    },
     big: p => p.score,
     sub: () => "points"
   },
@@ -613,6 +652,14 @@ const GAMES = {
       if (!p.killer) return "Hit <b>" + dbl(p.num) + "</b> to become a killer";
       return "Killer: take lives with <b>" + killerTargets(s, p).map(o => dbl(o.num)).join(" &nbsp;") + "</b>. Your own " + dbl(p.num) + " costs you a life.";
     },
+    // A free number while picking, then its own double, then the opponent with the fewest lives.
+    aim(s) {
+      const p = s.p[s.cur];
+      if (killerPicking(s)) return { n: killerFree(s).at(-1), m: 1 };
+      if (!p.killer) return { n: p.num, m: 2 };
+      const t = killerTargets(s, p).reduce((a, o) => o.lives < a.lives ? o : a);
+      return { n: t.num, m: 2 };
+    },
     big: p => p.num || "?",
     sub(p, s) {
       if (!p.num) return "no number yet";
@@ -670,6 +717,45 @@ function replayTurns(setup, log) {
   if (s.over && (!last || last.darts !== s.darts)) turns.push({ player: s.cur, darts: s.darts, note: s.note });
   return { s, turns };
 }
+
+/* ================= computer player =================
+   The computer aims with its game's aim(s), then its dart lands with a random scatter around that point on a
+   real board (sizes in mm). Only the landed dart goes in the log, so replay never needs the randomness. */
+const BOT_NAME = "Computer";
+// sd: standard deviation of each dart's landing in mm, tuned to about a 30, 55 and 85 average at 501.
+const BOT = { easy: { label: "Easy", sd: 29 }, medium: { label: "Medium", sd: 14.5 }, hard: { label: "Hard", sd: 8.5 } };
+const BOT_CHOICES = [[undefined, "Off"], ...Object.entries(BOT).map(([k, b]) => [k, b.label])];
+const botOn = setup => Object.hasOwn(BOT, setup.bot ?? "");
+const isBot = (setup, name) => name === BOT_NAME && botOn(setup);
+const botTurn = s => !s.over && isBot(s.setup, s.p[s.cur].name);
+
+// A regulation board's radii in mm (the tappable board widens its rings, so it can't be used here).
+const BOARD_MM = { bull: 6.35, outerBull: 15.9, treble: [99, 107], double: [162, 170] };
+// Aim at the middle of the treble or double band, or of the fat outer single. The bull is always aimed at its centre, whatever m.
+const AIM_RADIUS = { 1: (BOARD_MM.treble[1] + BOARD_MM.double[0]) / 2, 2: (BOARD_MM.double[0] + BOARD_MM.double[1]) / 2, 3: (BOARD_MM.treble[0] + BOARD_MM.treble[1]) / 2 };
+const aimPoint = t => t.n === 25 ? [0, 0] : polar(0, 0, AIM_RADIUS[t.m], BOARD_ORDER.indexOf(t.n) * 18);
+function landing(x, y) {
+  const r = Math.hypot(x, y), { bull, outerBull, treble, double } = BOARD_MM;
+  if (r <= bull) return { n: 25, m: 2 };
+  if (r <= outerBull) return { n: 25, m: 1 };
+  if (r > double[1]) return { n: 0, m: 1 };
+  const n = BOARD_ORDER[Math.floor((Math.atan2(y, x) * 180 / Math.PI + 90 + 360 + 9) % 360 / 18) % 20];
+  if (r >= double[0]) return { n, m: 2 };
+  if (r >= treble[0] && r <= treble[1]) return { n, m: 3 };
+  return { n, m: 1 };
+}
+function botThrow(s, rnd = Math.random) {
+  const [x, y] = aimPoint(GAMES[s.setup.game].aim(s)), sd = BOT[s.setup.bot].sd;
+  const gauss = () => Math.sqrt(-2 * Math.log(1 - rnd())) * Math.cos(2 * Math.PI * rnd());
+  return landing(x + gauss() * sd, y + gauss() * sd);
+}
+// Who threw each dart in the log, by player index.
+function throwers(setup, log) {
+  const s = newState(setup);
+  return log.map(d => { const i = s.cur; throwDart(s, d); return i; });
+}
+// Undo only goes back to a person's dart, so it does nothing while every dart so far is the computer's.
+const canUndo = (setup, log) => throwers(setup, log).some(i => !isBot(setup, setup.players[i]));
 
 /* ================= app ================= */
 
@@ -745,24 +831,35 @@ const sameName = (a, b) => nameKey(a) === nameKey(b);
 // Back from the scoreboard returns to a finished game only if it is still there to show.
 const canReturnToGame = () => app.boardFrom === "play" && app.setup.players.length > 0 && app.log.length > 0;
 const inGame = n => app.setup.players.some(p => sameName(p, n));
+const humans = st => st.players.filter(n => !isBot(st, n));
+/* The computer plays only against exactly one person: it is the "Computer" entry in setup.players while
+   setup.bot holds its level, and it goes when a second person joins or the last one sits out. */
+function fixBot(st) {
+  if (!botOn(st) || humans(st).length !== 1) delete st.bot;
+  st.players = st.players.filter(n => !sameName(n, BOT_NAME) || isBot(st, n));
+  if (st.bot && !st.players.includes(BOT_NAME)) st.players.push(BOT_NAME);
+}
 /* Keep setup.players a clean subset of the roster. Older saves have no roster: it starts from the current
-   setup, minus the old "Player 1"/"Player 2" placeholders, and their names may be blank or duplicated. */
+   setup, minus the old "Player 1"/"Player 2" placeholders, and their names may be blank or duplicated.
+   The computer's name is kept out of the roster. */
 function syncRoster() {
   const migrating = !Array.isArray(app.roster);
-  app.roster = (migrating ? [] : app.roster).filter(n => typeof n === "string" && n.trim());
+  app.roster = (migrating ? [] : app.roster).filter(n => typeof n === "string" && n.trim() && !sameName(n, BOT_NAME));
   if (app.view === "play" || (app.view === "scores" && app.boardFrom === "play")) { // a game on screen keeps its names, but they are still saved
-    for (const n of app.setup.players) if (String(n).trim() && !app.roster.some(r => sameName(r, n))) app.roster.push(n);
+    for (const n of app.setup.players) if (String(n).trim() && !sameName(n, BOT_NAME) && !app.roster.some(r => sameName(r, n))) app.roster.push(n);
     return;
   }
   const players = [];
   for (const raw of app.setup.players) {
+    if (isBot(app.setup, raw)) { players.push(raw); continue; } // keeps its place in the throwing order
     const n = String(raw).trim();
-    if (!n || players.some(p => sameName(p, n)) || (migrating && /^Player \d+$/.test(n))) continue;
+    if (!n || sameName(n, BOT_NAME) || players.some(p => sameName(p, n)) || (migrating && /^Player \d+$/.test(n))) continue;
     let r = app.roster.find(x => sameName(x, n));
     if (!r) app.roster.push(r = n);
     players.push(r);
   }
   app.setup.players = players.slice(0, MAX_PLAYERS);
+  fixBot(app.setup);
 }
 const tooFew = st => st.players.length < (GAMES[st.game].minPlayers || 1);
 const AWAKE_CHOICES = [[true, "Keep on"], [false, "Normal"]];
@@ -781,8 +878,14 @@ function setupView() {
   const opts = groups && `<div class="opts">${groups}</div>`;
   const full = st.players.length >= MAX_PLAYERS;
   const fewNote = st.players.length ? `${g.title} needs at least ${g.minPlayers} players.` : "Add a player to start.";
-  const playing = st.players.map((n, i) => `<li><span class="pname">${esc(n)}</span>
+  const playing = st.players.map((n, i) => isBot(st, n)
+    ? `<li><span class="pname">${esc(n)} <span class="lvl">${BOT[st.bot].label}</span></span>
+      <button class="btn" data-act="nobot">Remove<span class="vh"> ${esc(n)}</span></button></li>`
+    : `<li><span class="pname">${esc(n)}</span>
     <button class="btn" data-act="sit" data-v="${i}">Sit out<span class="vh"> ${esc(n)}</span></button></li>`).join("");
+  const vsBot = humans(st).length === 1 ? `<section class="block"><h2 class="label">Play against the computer</h2>
+    ${seg("Play against the computer", "bot", BOT_CHOICES, st.bot)}
+    <p class="fine">Games against the computer don't count towards wins on the scoreboard.</p></section>` : "";
   const saved = app.roster.map((n, i) => [n, i]).filter(([n]) => !inGame(n)).map(([n, i]) => `<li>
     <button class="btn join" data-act="join" data-v="${i}" ${full ? "disabled" : ""}>+ ${esc(n)}</button>
     <button class="btn del danger" data-act="del" data-v="${i}">${confirming === "del:" + i ? "Tap again to delete" : "Delete"}<span class="vh"> ${esc(n)}</span></button></li>`).join("");
@@ -794,6 +897,7 @@ function setupView() {
       <form class="addp"><input id="newp" value="${esc(draft)}" maxlength="14" autocomplete="off" placeholder="New player" aria-label="New player name" ${full ? "disabled" : ""}>
         <button class="btn" ${full ? "disabled" : ""}>Add</button></form>
       ${full ? `<p class="fine">${MAX_PLAYERS} players is the most for one game.</p>` : ""}</section>
+    ${vsBot}
     ${saved ? `<section class="block"><h2 class="label">Saved players</h2><ul class="saved">${saved}</ul>
       <p class="fine">Tap a name to add them to this game.</p></section>` : ""}
     ${canWake ? `<section class="block"><h2 class="label">Screen during a game</h2>${seg("Screen during a game", "awake", AWAKE_CHOICES, awake())}</section>` : ""}
@@ -865,26 +969,26 @@ function playView() {
     const head = names.length > 1 ? names.join(" and ") + " tie" : names[0] + " wins";
     side = `<div class="win"><h2>${head}</h2><div class="row">
       <button class="btn primary" data-act="again">Play again</button>
-      <button class="btn" data-act="undo">Undo last dart</button>
+      ${canUndo(app.setup, app.log) ? `<button class="btn" data-act="undo">Undo last dart</button>` : ""}
       <button class="btn" data-act="new">Change game</button>
       <button class="btn" data-act="board">Scoreboard</button></div>
       <p class="fine">Play again keeps the same game and moves the first player to the back of the order.</p></div>`;
   } else {
-    const live = g.live ? g.live(s) : null;
+    const live = g.live ? g.live(s) : null, busy = botTurn(s);
     const isDim = (n, m) => !!live && !live(n, m);
-    const dim = (n, m) => isDim(n, m) ? "dim" : "";
+    const dim = (n, m) => isDim(n, m) ? "dim" : "", off = busy ? "disabled" : "";
     const bank = from => `<div class="bank"><span class="hd">Single</span><span class="hd">Double</span><span class="hd">Triple</span>${
       Array.from({ length: 10 }, (_, i) => from - i).map(n => [1, 2, 3].map(m =>
         `<button class="${dim(n, m)} m${m}" data-act="n" data-v="${n}" data-m="${m}">${["", "", "D", "T"][m]}${n}</button>`).join("")).join("")}</div>`;
     side = `
-      <div class="turn"><span class="who">${esc(s.p[s.cur].name)} to throw</span><div class="slots" aria-label="Darts this turn">${slots}</div></div>
+      <div class="turn"><span class="who">${esc(s.p[s.cur].name)} ${busy ? "is throwing…" : "to throw"}</span><div class="slots" aria-label="Darts this turn">${slots}</div></div>
       <p class="note" aria-live="polite">${note}</p>
-      ${app.input === "keys" ? `<div class="banks">${bank(20)}${bank(10)}</div>` : dartboardSvg(isDim)}
+      <div ${busy ? 'class="busy" inert' : ""}>${app.input === "keys" ? `<div class="banks">${bank(20)}${bank(10)}</div>` : dartboardSvg(isDim)}</div>
       <div class="keys3">
-        ${app.input === "keys" ? `<button class="${dim(25, 1)}" data-act="n" data-v="25" data-m="1" aria-label="Outer bull, 25">25</button>
-        <button class="${dim(25, 2)}" data-act="n" data-v="25" data-m="2" aria-label="Bullseye, 50">Bull</button>` : ""}
-        <button class="miss" data-act="n" data-v="0" data-m="1">Miss</button>
-        <button data-act="undo" ${app.log.length ? "" : "disabled"}>Undo</button>
+        ${app.input === "keys" ? `<button class="${dim(25, 1)}" data-act="n" data-v="25" data-m="1" aria-label="Outer bull, 25" ${off}>25</button>
+        <button class="${dim(25, 2)}" data-act="n" data-v="25" data-m="2" aria-label="Bullseye, 50" ${off}>Bull</button>` : ""}
+        <button class="miss" data-act="n" data-v="0" data-m="1" ${off}>Miss</button>
+        <button data-act="undo" ${canUndo(app.setup, app.log) ? "" : "disabled"}>Undo</button>
         <button data-act="input" data-v="${app.input === "keys" ? "board" : "keys"}">${app.input === "keys" ? "Board" : "Keys"}</button>
       </div>`;
   }
@@ -909,8 +1013,9 @@ function scoreRows(period, game) {
     const { s, byPlayer } = replayEntry(h);
     if (!s.over) continue; // a log that no longer finishes under the current rules has no result
     count++;
-    const multi = s.p.length > 1;
+    const multi = humans(h.setup).length > 1; // the computer isn't a second player for wins
     s.p.forEach((p, i) => {
+      if (isBot(h.setup, p.name)) return;
       const id = nameKey(p.name);
       let r = rows.get(id);
       if (!r) rows.set(id, r = { name: app.roster.find(n => sameName(n, p.name)) || p.name, played: 0, won: 0, acc: {} });
@@ -956,6 +1061,22 @@ function render() {
   root.className = app.view;
   root.innerHTML = ({ play: playView, scores: scoreView }[app.view] || setupView)();
   syncWakeLock();
+  scheduleBot();
+}
+
+/* On the computer's turn, throw its next dart after a pause: a longer one at the start of its turn so the
+   last turn can be read, then one per dart so each can be followed. Any render resets the timer. */
+let botTimer = null;
+function scheduleBot() {
+  clearTimeout(botTimer); botTimer = null;
+  if (app.view !== "play" || !botOn(app.setup) || document.getElementById("rules").open) return;
+  const s = replay(app.setup, app.log);
+  if (!botTurn(s)) return;
+  botTimer = setTimeout(() => {
+    const now = replay(app.setup, app.log);
+    // Not through act(): that would cancel a pending "Tap again" and move focus.
+    if (app.view === "play" && botTurn(now)) { app.log.push(botThrow(now)); recordResult(); save(); render(); }
+  }, s.darts.length ? 750 : 1300);
 }
 
 /* Keep the screen on while a game is open. The browser drops the lock whenever
@@ -988,6 +1109,7 @@ function showRules(id) {
   if (!g || !g.rules || dlg.open) return;
   document.getElementById("rules-title").textContent = g.title;
   document.getElementById("rules-text").innerHTML = g.rules;
+  clearTimeout(botTimer); // the computer waits while the rules are open
   dlg.showModal();
   dlg.scrollTop = 0; // the modal dialog is the scroller; start each game's rules at the top
 }
@@ -1008,18 +1130,20 @@ function act({ act: a, v, m, k }) {
     case "add": {
       const name = String(v || "").trim().slice(0, 14);
       if (!name || st.players.length >= MAX_PLAYERS) return;
-      if (inGame(name)) return; // already playing: leave the text so the duplicate is visible
+      if (inGame(name) || sameName(name, BOT_NAME)) return; // already playing, or the computer's name: leave the text so it is visible
       let n = app.roster.find(r => sameName(r, name));
       if (!n) app.roster.push(n = name);
-      st.players.push(n);
+      st.players.push(n); fixBot(st);
       draft = ""; break;
     }
     case "join": {
       const n = app.roster[+v];
       if (!n || st.players.length >= MAX_PLAYERS || inGame(n)) return;
-      st.players.push(n); break;
+      st.players.push(n); fixBot(st); break;
     }
-    case "sit": st.players.splice(+v, 1); break;
+    case "sit": st.players.splice(+v, 1); fixBot(st); break;
+    case "bot": if (!BOT_CHOICES[v]) return; st.bot = BOT_CHOICES[v][0]; fixBot(st); break;
+    case "nobot": delete st.bot; fixBot(st); break;
     case "del": {
       const i = +v, n = app.roster[i];
       if (!n || inGame(n)) return;
@@ -1030,8 +1154,18 @@ function act({ act: a, v, m, k }) {
       if (tooFew(st)) return;
       draft = "";
       app.log = []; app.view = "play"; app.gameId = Date.now(); break;
-    case "n": app.log.push({ n: +v, m: +m || 1 }); break;
-    case "undo": app.log.pop(); break;
+    case "n": {
+      const s = replay(st, app.log);
+      if (s.over || botTurn(s)) return; // the computer throws its own darts (scheduleBot)
+      app.log.push({ n: +v, m: +m || 1 }); break;
+    }
+    case "undo": {
+      if (!canUndo(st, app.log)) return;
+      // Take back the computer's darts since the last human dart, then that dart, so the computer doesn't just throw again.
+      const who = throwers(st, app.log);
+      while (app.log.length && isBot(st, st.players[who[app.log.length - 1]])) app.log.pop();
+      app.log.pop(); break;
+    }
     case "input": app.input = v; break;
     case "awake": if (!AWAKE_CHOICES[v]) return; app.awake = AWAKE_CHOICES[v][0]; wakeRefused = false; break;
     case "again": st.players.push(st.players.shift()); app.log = []; app.gameId = Date.now(); break;
@@ -1084,6 +1218,7 @@ function start(data) {
   document.addEventListener("visibilitychange", () => { wakeRefused = false; syncWakeLock(); });
   // Light dismiss for browsers without <dialog closedby> (Safari): close on a press and release outside the box.
   const dlg = document.getElementById("rules");
+  if (dlg) dlg.addEventListener("close", scheduleBot);
   if (dlg && !("closedBy" in HTMLDialogElement.prototype)) {
     const outside = e => { const r = dlg.getBoundingClientRect(); return e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom; };
     let pressedOutside = false;
